@@ -24,19 +24,24 @@ struct alloc_ops
 {
 	/* Allocate num elements of size sz each. The result will be a buffer of size (at least) num*sz.
 	 */
-	int	(*malloc )(struct alloc *self, void **p, ll num, ll sz, 
-		           const char* file, const char* func, long line, const char* fmt, ...);
+	int	(*malloc)(struct alloc *self, void **p, ll num, ll sz, 
+		          const char* file, const char* func, long line, const char* fmt, ...);
 	/* Same as malloc except that the resulting buffer is guaranteed to be zeroed. Note that this means
 	 * that the corresponding pages are touched by the allocating thread which may impact the memory
 	 * placmement on NUMA machines (first touch policy).
 	 */
-	int	(*zalloc )(struct alloc *self, void **p, ll num, ll sz, 
-		           const char* file, const char* func, long line, const char* fmt, ...);
+	int	(*zalloc)(struct alloc *self, void **p, ll num, ll sz, 
+		          const char* file, const char* func, long line, const char* fmt, ...);
 	/* Reallocate a buffer that was allocated with malloc or zalloc passing onum and osz such that the
 	 * new buffer has place for nnum elements of size nsz each.
 	 */
 	int	(*realloc)(struct alloc *self, void **p, ll onum, ll osz, ll nnum, ll nsz,
 		           const char* file, const char* func, long line, const char* fmt, ...);
+	/* Variant of realloc. If realloc increased the storage space this function guarantees that the
+	 * additional memory is filled with zeroes.
+	 */
+	int	(*zrealloc)(struct alloc *self, void **p, ll onum, ll osz, ll nnum, ll nsz,
+		            const char* file, const char* func, long line, const char* fmt, ...);
 	/* 
 	 */
 	int	(*free)(struct alloc *self, void **p, ll num, ll size, 
@@ -48,15 +53,23 @@ struct alloc_ops
 };
 
 #define	MALLOC(SELF, P, NUM, SZ, FMT, ...) \
-	self->ops->malloc((SELF), (P), (NUM), (SZ), __FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
+	(SELF)->ops->malloc((SELF), (P), (NUM), (SZ), \
+	                    __FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
 #define	ZALLOC(SELF, P, NUM, SZ, FMT, ...) \
-	self->ops->zalloc((SELF), (P), (NUM), (SZ), __FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
+	(SELF)->ops->zalloc((SELF), (P), (NUM), (SZ), \
+	                    __FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
 #define REALLOC(SELF, P, ONUM, OSZ, NNUM, NSZ, FMT, ...) \
-	self->ops->realloc((SELF), (P), (ONUM), (NNUM), (SZ), __FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
+	(SELF)->ops->realloc((SELF), (P), (ONUM), (OSZ), (NNUM), (NSZ), \
+	                     __FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
+#define ZREALLOC(SELF, P, ONUM, OSZ, NNUM, NSZ, FMT, ...) \
+	(SELF)->ops->zrealloc((SELF), (P), (ONUM), (OSZ), (NNUM), (NSZ), \
+	                      __FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
 #define FREE(SELF, P, NUM, SZ, FMT, ...) \
-	self->ops->free((SELF), (P), (NUM), (SZ), __FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
+	(SELF)->ops->free((SELF), (P), (NUM), (SZ), \
+	                  __FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
 #define ZFREE(SELF, P, NUM, SZ, FMT, ...) \
-	self->ops->zfree((SELF), (P), (NUM), (SZ), __FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
+	(SELF)->ops->zfree((SELF), (P), (NUM), (SZ), \
+	                   __FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
 
 
 /*
