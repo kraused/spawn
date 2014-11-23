@@ -2,6 +2,12 @@
 #ifndef SPAWN_ERROR_H_INCLUDED
 #define SPAWN_ERROR_H_INCLUDED 1
 
+#include <errno.h>
+
+/* Some custom errnos that seem useful */
+#define ESOMEFAULT	201	/* Something bad happend */
+
+
 void spawn_error(const char* file, const char* func, long line, const char* fmt, ...);
 void spawn_warn(const char* file, const char* func, long line, const char* fmt, ...);
 void spawn_log(const char* file, const char* func, long line, const char* fmt, ...);
