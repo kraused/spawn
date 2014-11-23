@@ -1,11 +1,11 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 
 #include "config.h"
 #include "compiler.h"
 #include "alloc.h"
+#include "error.h"
 
 
 static int _libc_malloc(struct alloc *self, void **p, ll num, ll sz,
