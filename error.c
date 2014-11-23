@@ -6,6 +6,7 @@
 #include "compiler.h"
 #include "error.h"
 
+
 static void _report_to_stderr(const char* prefix, const char* file,
                               const char* func, long line, const char* fmt,
                               va_list vl);
