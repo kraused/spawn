@@ -12,15 +12,15 @@
 #include "plugin.h"
 
 
-static int _exec(struct plugin_exec *self,
+static int _exec(struct exec_plugin *self,
                  const char *host,
                  char *const *argv);
 
-static struct plugin_exec_ops _local_ops = {
+static struct exec_plugin_ops _local_ops = {
 	.exec = _exec
 };
 
-static struct plugin_exec _local = {
+static struct exec_plugin _local = {
 	.base = {
 		.name = "local",
 		.version = 1,
@@ -43,7 +43,7 @@ struct plugin *plugin_construct()
 }
 
 
-static int _exec(struct plugin_exec *self,
+static int _exec(struct exec_plugin *self,
                  const char *host,
                  char *const *argv)
 {

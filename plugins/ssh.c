@@ -6,15 +6,15 @@
 #include "plugin.h"
 
 
-static int _exec(struct plugin_exec *self,
+static int _exec(struct exec_plugin *self,
                  const char *host,
                  char *const *argv);
 
-static struct plugin_exec_ops _ssh_ops = {
+static struct exec_plugin_ops _ssh_ops = {
 	.exec = _exec
 };
 
-static struct plugin_exec _ssh = {
+static struct exec_plugin _ssh = {
 	.base = {
 		.name = "ssh",
 		.version = 1,
@@ -37,7 +37,7 @@ struct plugin *plugin_construct()
 }
 
 
-static int _exec(struct plugin_exec *self,
+static int _exec(struct exec_plugin *self,
                  const char *host,
                  char *const *argv)
 {

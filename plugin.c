@@ -41,18 +41,18 @@ struct plugin *load_plugin(const char *path)
 	return plu;
 }
 
-struct plugin_exec *cast_to_plugin_exec(struct plugin *plu)
+struct exec_plugin *cast_to_exec_plugin(struct plugin *plu)
 {
 	if (likely(plu && (PLUGIN_EXEC == plu->type)))
-		return (struct plugin_exec *)plu;
+		return (struct exec_plugin *)plu;
 	
 	return NULL;
 }
 
-struct plugin_task *cast_to_plugin_task(struct plugin *plu)
+struct task_plugin *cast_to_task_plugin(struct plugin *plu)
 {
 	if (likely(plu && (PLUGIN_TASK == plu->type)))
-		return (struct plugin_task *)plu;
+		return (struct task_plugin *)plu;
 	
 	return NULL;
 }

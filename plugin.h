@@ -4,10 +4,10 @@
 
 struct plugin;
 struct plugin_ops;
-struct plugin_exec;
-struct plugin_exec_opts;
-struct plugin_task;
-struct plugin_task_opts;
+struct exec_plugin;
+struct exec_plugin_opts;
+struct task_plugin;
+struct task_plugin_opts;
 
 
 enum
@@ -16,7 +16,7 @@ enum
 	 */
 	PLUGIN_NOTYPE = 0,
 	/* Plugin providing remote spawning capabilities.
-	 * See plugin_exec for details
+	 * See exec_plugin for details
 	 */
 	PLUGIN_EXEC,
 	/* Plugin which defines the actual task to be executed
@@ -57,18 +57,18 @@ struct plugin_ops
 /*
  * Plugin providing (remote) execution functionality.
  */
-struct plugin_exec
+struct exec_plugin
 {
 	struct plugin		base;
 
-	struct plugin_exec_ops	*ops;
+	struct exec_plugin_ops	*ops;
 };
 
 /*
  * Operations provided by an "exec" plugin. Function pointers may be
  * NULL if the plugin does not provide the functionality.
  */
-struct plugin_exec_ops
+struct exec_plugin_ops
 {
 	/*
 	 * FIXME Provide option/functionality for spawning
@@ -77,7 +77,7 @@ struct plugin_exec_ops
 	 *       by first transferring all applications to the
 	 *       remote host.
 	 */
-	int	(*exec)(struct plugin_exec *self,
+	int	(*exec)(struct exec_plugin *self,
 		        const char *host,
 	                char *const *argv);
 };
@@ -86,7 +86,7 @@ struct plugin_exec_ops
  * Task plugin. The task plugin provides the actual work to be executed once
  * we succesfully setup the network.
  */
-struct plugin_task
+struct task_plugin
 {
 	struct plugin		base;
 
@@ -97,13 +97,13 @@ struct plugin_task
 	 *	 functionality. 
 	 */
 
-	struct plugin_task_ops	*ops;
+	struct task_plugin_ops	*ops;
 };
 
 /*
  * Operations provided by a "task" pluign
  */
-struct plugin_task_ops
+struct task_plugin_ops
 {
 	int	(*task)(int argc, char **argv);
 };
@@ -115,16 +115,16 @@ struct plugin_task_ops
 struct plugin *load_plugin(const char *path);
 
 /*
- * Check that the plugin is of type PLUGIN_EXEC and cast to plugin_exec
+ * Check that the plugin is of type PLUGIN_EXEC and cast to exec_plugin
  * if the type is correct.
  */
-struct plugin_exec *cast_to_plugin_exec(struct plugin *plu);
+struct exec_plugin *cast_to_exec_plugin(struct plugin *plu);
 
 /*
- * Check that the plugin is of type PLUGIN_EXEC and cast to plugin_task
+ * Check that the plugin is of type PLUGIN_EXEC and cast to task_plugin
  * if the type is correct.
  */
-struct plugin_task *cast_to_plugin_task(struct plugin *plu);
+struct task_plugin *cast_to_task_plugin(struct plugin *plu);
 
 #endif
 
