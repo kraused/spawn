@@ -2,8 +2,8 @@
 #ifndef SPAWN_CONFIG_H_INCLUDED
 #define SPAWN_CONFIG_H_INCLUDED 1
 
-#define	SPAWN_EXE_LOCAL	SPAWN_INSTALLATION_PREFIX "/bin/spawn"
-#define SPAWN_EXE_OTHER	SPAWN_INSTALLATION_PREFIX "/libexec/spawn"
+#define	SPAWN_EXE_LOCAL	SPAWN_INSTALL_PREFIX "/bin/spawn"
+#define SPAWN_EXE_OTHER	SPAWN_INSTALL_PREFIX "/libexec/spawn"
 
 /*
  * Maximal length of a filesystem path.
