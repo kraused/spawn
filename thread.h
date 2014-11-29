@@ -25,7 +25,7 @@ struct thread
 
 /*
  * Constructor for struct thread. When this function returns the
- * new thread is running but will not perform anything until 
+ * new thread is running but will not perform anything until
  * thread_start() is called.
  */
 int thread_ctor(struct thread *self);
@@ -36,7 +36,7 @@ int thread_ctor(struct thread *self);
 int thread_dtor(struct thread *self);
 
 /*
- * Start the thread execution. The 
+ * Start the thread execution. The
  */
 int thread_start(struct thread *self, int (*main)(void *), void *arg);
 

@@ -44,7 +44,7 @@ fail1:
 	tmp = pthread_cond_destroy(&self->cond);
 	if (unlikely(tmp))
 		error("pthread_cond_destroy() failed with error %d.", tmp);
-	
+
 	return err;
 }
 
@@ -105,12 +105,12 @@ int thread_join(struct thread *self)
 		error("pthread_join() failed with error %d.", err);
 		return err;
 	}
-	
+
 	if (unlikely(p != self)) {
 		error("_thread_main() did not execute properly.");
 		return -ESOMEFAULT;
 	}
-	
+
 	return 0;
 }
 
