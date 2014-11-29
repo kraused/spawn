@@ -22,33 +22,39 @@ struct alloc
  */
 struct alloc_ops
 {
-	/* Allocate num elements of size sz each. The result will be a buffer of size (at least) num*sz.
+	/*
+	 * Allocate num elements of size sz each. The result will be a buffer of size (at least) num*sz.
 	 */
-	int	(*malloc)(struct alloc *self, void **p, ll num, ll sz, 
+	int	(*malloc)(struct alloc *self, void **p, ll num, ll sz,
 		          const char* file, const char* func, long line, const char* fmt, ...);
-	/* Same as malloc except that the resulting buffer is guaranteed to be zeroed. Note that this means
+	/*
+	 * Same as malloc except that the resulting buffer is guaranteed to be zeroed. Note that this means
 	 * that the corresponding pages are touched by the allocating thread which may impact the memory
 	 * placmement on NUMA machines (first touch policy).
 	 */
-	int	(*zalloc)(struct alloc *self, void **p, ll num, ll sz, 
+	int	(*zalloc)(struct alloc *self, void **p, ll num, ll sz,
 		          const char* file, const char* func, long line, const char* fmt, ...);
-	/* Reallocate a buffer that was allocated with malloc or zalloc passing onum and osz such that the
+	/*
+	 * Reallocate a buffer that was allocated with malloc or zalloc passing onum and osz such that the
 	 * new buffer has place for nnum elements of size nsz each.
 	 */
 	int	(*realloc)(struct alloc *self, void **p, ll onum, ll osz, ll nnum, ll nsz,
 		           const char* file, const char* func, long line, const char* fmt, ...);
-	/* Variant of realloc. If realloc increased the storage space this function guarantees that the
+	/*
+	 * Variant of realloc. If realloc increased the storage space this function guarantees that the
 	 * additional memory is filled with zeroes.
 	 */
 	int	(*zrealloc)(struct alloc *self, void **p, ll onum, ll osz, ll nnum, ll nsz,
 		            const char* file, const char* func, long line, const char* fmt, ...);
-	/* 
+	/*
+	 * Free memory.
 	 */
-	int	(*free)(struct alloc *self, void **p, ll num, ll size, 
+	int	(*free)(struct alloc *self, void **p, ll num, ll size,
 	                const char* file, const char* func, long line, const char* fmt, ...);
-	/* Same as free but clears memory content before freeing the allocation.
+	/*
+	 * Same as free but clears memory content before freeing the allocation.
 	 */
-	int	(*zfree)(struct alloc *self, void **p, ll num, ll size, 
+	int	(*zfree)(struct alloc *self, void **p, ll num, ll size,
 	                 const char* file, const char* func, long line, const char* fmt, ...);
 };
 
@@ -73,7 +79,7 @@ struct alloc_ops
 
 
 /*
- * get a pointer to an allocator that works directly on top of the malloc/calloc/free functions provided by libc.
+ * Get a pointer to an allocator that works directly on top of the malloc/calloc/free functions provided by libc.
  * Even though this function may return different alloc instances when called multiple times all these allocators
  * use the same pool size.
  * The allocator will not make use of the debug information provided.
