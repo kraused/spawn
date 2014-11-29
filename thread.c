@@ -27,7 +27,7 @@ int thread_ctor(struct thread *self)
 		goto fail1;
 	}
 
-	err = pthread_create(&self->handle, NULL, _thread_main, NULL);
+	err = pthread_create(&self->handle, NULL, _thread_main, self);
 	if (unlikely(err)) {
 		error("pthread_create() failed with error %d.", err);
 		goto fail2;
@@ -36,11 +36,15 @@ int thread_ctor(struct thread *self)
 	return 0;
 
 fail2:
+	assert(err);
+
 	tmp = pthread_mutex_destroy(&self->mutex);
 	if (unlikely(tmp))
 		error("pthread_mutex_destroy() failed with error %d.", tmp);
 
 fail1:
+	assert(err);
+
 	tmp = pthread_cond_destroy(&self->cond);
 	if (unlikely(tmp))
 		error("pthread_cond_destroy() failed with error %d.", tmp);
@@ -55,13 +59,13 @@ int thread_dtor(struct thread *self)
 	err = pthread_mutex_destroy(&self->mutex);
 	if (unlikely(err)) {
 		error("pthread_mutex_destroy() failed with error %d.", err);
-		return err;
+		return -err;
 	}
 
 	err = pthread_cond_destroy(&self->cond);
 	if (unlikely(err)) {
 		error("pthread_cond_destroy() failed with error %d.", err);
-		return err;
+		return -err;
 	}
 
 	return 0;
@@ -74,7 +78,7 @@ int thread_start(struct thread *self, int (*main)(void *), void *arg)
 	err = pthread_mutex_lock(&self->mutex);
 	if (unlikely(err)) {
 		error("pthread_mutex_lock() failed with error %d.", err);
-		return err;
+		return -err;
 	}
 
 	self->main = main;
@@ -89,7 +93,7 @@ int thread_start(struct thread *self, int (*main)(void *), void *arg)
 	err = pthread_cond_signal(&self->cond);
 	if (unlikely(err)) {
 		error("pthread_cond_signal() failed with error %d.", err);
-		return err;
+		return -err;
 	}
 
 	return 0;
@@ -103,7 +107,7 @@ int thread_join(struct thread *self)
 	err = pthread_join(self->handle, &p);
 	if (unlikely(err)) {
 		error("pthread_join() failed with error %d.", err);
-		return err;
+		return -err;
 	}
 
 	if (unlikely(p != self)) {
@@ -121,22 +125,22 @@ int lock_ctor(struct lock *self)
 	err = pthread_mutexattr_init(&self->attr);
 	if (unlikely(err)) {
 		error("pthread_mutexattr_init() failed with error %d.", err);
-		return err;
+		return -err;
 	}
 
 	err = pthread_mutexattr_settype(&self->attr, PTHREAD_MUTEX_RECURSIVE);
 	if (unlikely(err)) {
 		error("pthread_mutexattr_settype() failed with error %d.", err);
-		return err;
+		return -err;
 	}
 
 	err = pthread_mutex_init(&self->mutex, &self->attr);
 	if (unlikely(err)) {
 		error("pthread_mutex_init() failed with error %d.", err);
-		return err;
+		return -err;
 	}
 
-	return err;
+	return 0;
 }
 
 int lock_dtor(struct lock *self)
@@ -146,13 +150,13 @@ int lock_dtor(struct lock *self)
 	err = pthread_mutex_destroy(&self->mutex);
 	if (unlikely(err)) {
 		error("pthread_mutex_destroy() failed with error %d.", err);
-		return err;
+		return -err;
 	}
 
 	err = pthread_mutexattr_destroy(&self->attr);
 	if (unlikely(err)) {
 		error("pthread_mutexattr_destroy() failed with error %d.", err);
-		return err;
+		return -err;
 	}
 
 	return 0;
@@ -166,7 +170,7 @@ int lock_acquire(struct lock *self)
 		err = pthread_mutex_lock(&self->mutex);
 		if (unlikely(err)) {
 			error("pthread_mutex_lock() failed with error %d.", err);
-			return err;
+			return -err;
 		}
 
 		break;
@@ -197,6 +201,11 @@ static void *_thread_main(void *arg)
 {
 	int err;
 	struct thread *self = (struct thread *)arg;
+
+	if (unlikely(!self)) {
+		error("self pointer is NULL.");
+		pthread_exit(NULL);
+	}
 
 	err = pthread_mutex_lock(&self->mutex);
 	if (unlikely(err)) {
