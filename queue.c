@@ -17,7 +17,7 @@ int queue_ctor(struct queue *self, struct alloc *alloc, ll capacity)
 
 	memset(self, 0, sizeof(*self));
 
-	err = ZALLOC(alloc, (void **)&self->buf, capacity, 
+	err = ZALLOC(alloc, (void **)&self->buf, capacity,
 	             sizeof(void *), "queue");
 	if (unlikely(err)) {
 		error("ZALLOC() failed with error %d.", err);
@@ -61,7 +61,7 @@ int queue_change_capacity(struct queue *self, ll capacity)
 	 * since the useful data may be split into two seperate groups
 	 * in the buffer and it is easier to copy the data out-of-place. */
 
-	err = ZALLOC(self->alloc, (void **)&buf, capacity, 
+	err = ZALLOC(self->alloc, (void **)&buf, capacity,
 	             sizeof(void *), "queue");
 	if (unlikely(err)) {
 		error("ZALLOC() failed with error %d.", err);

@@ -5,8 +5,8 @@
 /*
  * A generic queue storing pointers to something. The size of
  * the queue is fixed but the queue can be resized.
- * 
- * This structure is not thread-safe.  
+ *
+ * This structure is not thread-safe.
  */
 struct queue
 {
