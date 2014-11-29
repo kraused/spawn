@@ -172,11 +172,15 @@ int buffer_pool_ctor(struct buffer_pool *self, struct alloc *alloc, ll size)
 				 * reports reason. */
 
 fail2:
+	assert(err);
+
 	tmp = queue_dtor(&self->queue);
 	if (unlikely(tmp))
 		error("queue_dtor() failed with error %d.", tmp);
 
 fail1:
+	assert(err);
+
 	tmp = lock_dtor(&self->lock);
 	if (unlikely(tmp))
 		error("Failed to destruct lock (error %d).", tmp);
@@ -219,6 +223,8 @@ int buffer_pool_dtor(struct buffer_pool *self)
 	return 0;
 
 fail:
+	assert(err);
+
 	tmp = lock_release(&self->lock);
 	if (unlikely(tmp))
 		error("Failed to release lock (error %d).", tmp);
@@ -268,6 +274,8 @@ int buffer_pool_push(struct buffer_pool *self, struct buffer *buffer)
 	return 0;
 
 fail:
+	assert(err);
+
 	tmp = lock_release(&self->lock);
 	if (unlikely(tmp))
 		error("Failed to release lock (error %d).", tmp);
@@ -300,6 +308,8 @@ int buffer_pool_pull(struct buffer_pool *self, struct buffer **buffer)
 	return 0;
 
 fail:
+	assert(err);
+
 	tmp = lock_release(&self->lock);
 	if (unlikely(tmp))
 		error("Failed to release lock (error %d).", tmp);
@@ -365,11 +375,15 @@ static int _enqueue_bunch_of_buffers(struct buffer_pool *self, ll n, ll memsize)
 	return 0;
 
 fail2:
+	assert(err);
+
 	tmp = buffer_dtor(buffer);
 	if (unlikely(tmp))
 		error("struct buffer destructor failed with error %d.", tmp);
 
 fail1:
+	assert(err);
+
 	tmp = ZFREE(self->alloc, (void **)&buffer, 1,
 	            sizeof(buffer), "buffer");
 	if (unlikely(tmp))
