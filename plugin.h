@@ -94,7 +94,7 @@ struct task_plugin
 	 *       threads). Therefore we could organize the task plugins in a linked
 	 *	 list.
 	 *	 If we have multiple tasks we need to have some kind of multiplexing
-	 *	 functionality. 
+	 *	 functionality.
 	 */
 
 	struct task_plugin_ops	*ops;

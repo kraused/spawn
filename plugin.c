@@ -45,7 +45,7 @@ struct exec_plugin *cast_to_exec_plugin(struct plugin *plu)
 {
 	if (likely(plu && (PLUGIN_EXEC == plu->type)))
 		return (struct exec_plugin *)plu;
-	
+
 	return NULL;
 }
 
@@ -53,7 +53,7 @@ struct task_plugin *cast_to_task_plugin(struct plugin *plu)
 {
 	if (likely(plu && (PLUGIN_TASK == plu->type)))
 		return (struct task_plugin *)plu;
-	
+
 	return NULL;
 }
 
