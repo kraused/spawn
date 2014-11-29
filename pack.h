@@ -3,13 +3,15 @@
 #define SPAWN_PACK_H_INCLUDED 1
 
 #include "ints.h"
+#include "thread.h"
+#include "queue.h"
 
 /*
  * TODO Handle endianess. I do not like the idea to convert everything from
  *      host to (IP) network order since we mostly work on little endian systems.
  */
 
-/* 
+/*
  * A (resizable) buffer used, e.g., for message transfer.
  */
 struct buffer
@@ -27,32 +29,37 @@ struct buffer
 	ll		pos;
 };
 
-/* Buffer constructor. memsize is the initial memory size and should be > 0.
+/*
+ * Buffer constructor. memsize is the initial memory size and should be > 0.
  */
 int buffer_ctor(struct buffer *self, struct alloc *alloc, ll memsize);
 
-/* Buffer destructor.
+/*
+ * Buffer destructor.
  */
 int buffer_dtor(struct buffer *self);
 
-/* Clear the buffer. This will not release the memory.
+/*
+ * Clear the buffer. This will not release the memory.
  */
 int buffer_clear(struct buffer *self);
 
-/* Change the position pointer in the buffer. This is useful for example in order to
+/*
+ * Change the position pointer in the buffer. This is useful for example in order to
  * write the header (which does contain the payload size) after having filled the buffer
  * with the payload.
  * Seeking beyond the size of the buffer is an error.
  */
 int buffer_seek(struct buffer *self, ll pos);
 
-/* Query the buffer size. Note that this is not equal to the amount of memory allocated
+/*
+ * Query the buffer size. Note that this is not equal to the amount of memory allocated
  * for the struct buffer.
  */
 ll buffer_size(struct buffer *self);
 
-
-/* Pack and unpack values. Note that the number of elements is not stored in the buffer. If
+/*
+ * Pack and unpack values. Note that the number of elements is not stored in the buffer. If
  * necessary it should be explicitly written to the buffer prior to writing the actual data.
  *
  * Both, pack and unpack functions, advance the position pointer.
@@ -73,6 +80,42 @@ int buffer_pack_si64(struct buffer *self, const si64 *value, ll num);
 int buffer_unpack_si64(struct buffer *self, si64 *value, ll num);
 int buffer_pack_ui64(struct buffer *self, const ui64 *value, ll num);
 int buffer_unpack_ui64(struct buffer *self, ui64 *value, ll num);
+
+/*
+ * A thread-safe pool of buffers. Due to the asynchronous messaging scheme used in this
+ * application keeping track of all buffers is a tricky business in particular if we like
+ * to reuse buffers. The buffer pool (partially) solves the problem. A disadvantage of
+ * this scheme is that it will not scale to many concurrent threads.
+ */
+struct buffer_pool
+{
+	struct alloc	*alloc;
+	struct queue	queue;
+	struct lock	lock;
+};
+
+/*
+ * Create a new buffer pool. This function may only be called by a single function.
+ */
+int buffer_pool_ctor(struct buffer_pool *self, struct alloc *alloc, ll size);
+
+/*
+ * Destructor. Make sure no one is using the buffer before calling this function
+ * on one thread.
+ */
+int buffer_pool_dtor(struct buffer_pool *self);
+
+/*
+ * Enqueue a buffer into the buffer. You should only push() buffers that
+ * have been previously pull()ed from the same pool.
+ */
+int buffer_pool_push(struct buffer_pool *self, struct buffer *buffer);
+
+/*
+ * Obtain a buffer from the pool. If the pool is empty it will be resized and
+ * new buffers will be allocated.
+ */
+int buffer_pool_pull(struct buffer_pool *self, struct buffer **buffer);
 
 #endif
 
