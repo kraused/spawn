@@ -3,6 +3,7 @@
 #include "compiler.h"
 #include "error.h"
 #include "thread.h"
+#include "helper.h"
 
 
 static void *_thread_main(void *args);
@@ -201,6 +202,8 @@ static void *_thread_main(void *arg)
 {
 	int err;
 	struct thread *self = (struct thread *)arg;
+
+	log("Thread %d is alive.", (int )gettid());
 
 	if (unlikely(!self)) {
 		error("self pointer is NULL.");
