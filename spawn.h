@@ -3,6 +3,10 @@
 #define SPAWN_SPAWN_H_INCLUDED 1
 
 #include "ints.h"
+#include "thread.h"
+#include "comm.h"
+#include "network.h"
+#include "pack.h"
 
 struct sockaddr;
 
@@ -11,33 +15,14 @@ struct exec_plugin;
 
 
 /*
- * Network data structure.
- */
-struct network
-{
-	/* The actual network size is restricted to 65536 participants
-	 * since we use an unsigned integer of width 16 in the protocol.
-	 */
-	si32	size;
-	si32	here;	/* Participant identifier */
-	si32	*lft;
-
-	/*
-	 * Each port is a socket
-	 */
-	int	nports;
-	int	*ports;
-};
-
-/*
  * Record of a process on a (potentially remote) host.
  */
 struct process
 {
-	int		host;
-	long long	pid;
-	int		port;	/* Port through which the process is
-			         * reachable. */
+	int	host;
+	ll	pid;
+	int	port;	/* Port through which the process is
+		         * reachable. */
 };
 
 /*
@@ -45,23 +30,26 @@ struct process
  */
 struct spawn
 {
-	struct alloc	*alloc;
+	struct alloc		*alloc;
 
-	int		nhosts;
-	const char	**hosts;
-	struct network	tree;
+	/* Number of hosts. This number includes the host on which the
+	 * spawn program itself is running.
+	 */
+	int			nhosts;
+	/* Names of the hosts in the network. This is non-NULL only on
+	 * the root of the tree.
+	 */
+	const char		**hosts;
+
+	struct network		tree;
+	struct comm		comm;
+	struct buffer_pool	bufpool;
 
 	/* Direct child processes. Unless the tree width is large enough
 	 * this will only be subset of all processes spawned.
 	 */
-	int		nprocs;
-	struct process	*procs;
-
-	/* Socket used to listen to connections from children in the
-	 * tree. Managed seperately from the struct network since the
-	 * socket is closed as soon as the network is set up.
-	 */
-	int	listenfd;
+	int			nprocs;
+	struct process		*procs;
 
 	struct exec_plugin	*exec;
 };
@@ -77,15 +65,37 @@ int spawn_ctor(struct spawn *self, struct alloc *alloc);
 int spawn_dtor(struct spawn *self);
 
 /*
- * Start listening on the listenfd socket.
+ * Setup the spawn instance on the local host.
  */
-int spawn_start_listen(struct spawn *self, struct sockaddr *addr,
-                       unsigned long long addrlen, int backlog);
+int spawn_setup_on_local(struct spawn *self, int nhosts,
+                         const char **hosts, int treewidth);
 
 /*
- * Close listenfd.
+ * Setup the spawn instance on all other hosts.
  */
-int spawn_close_listen(struct spawn *self);
+int spawn_setup_on_other(struct spawn *self, int nhosts,
+                         int here);
+
+/*
+ * Load the exec plugin.
+ */
+int spawn_load_exec_plugin(struct spawn *self, const char *name);
+
+/*
+ * Bind the listenfd to the given address.
+ */
+int spawn_bind_listenfd(struct spawn *self, struct sockaddr *addr, ull addrlen);
+
+/*
+ * Start the communication module. The function begins listening
+ * for incoming connections and starts the communication thread.
+ */
+int spawn_comm_start(struct spawn *self);
+
+/*
+ * Halt the communication module. Close the listenfd.
+ */
+int spawn_comm_halt(struct spawn *self);
 
 #endif
 
