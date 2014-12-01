@@ -34,7 +34,7 @@ enum
 };
 
 /*
- * Message header for all protocol messages. Make sure this
+ * Message header for all protocol messages. The payload size may not be null!
  */
 struct __attribute__((packed)) message_header
 {
@@ -56,7 +56,7 @@ struct __attribute__((packed)) message_header
 	ui16	pad16[1];	/* I prefer manual padding over the packing by the
 				 * the compiler (the attribute is just for safety). */
 
-	ui32	payload;	/* Payload size */
+	ui32	payload;	/* Payload size. May not be zero. */
 };
 
 struct message_request_join
