@@ -4,7 +4,9 @@
 
 #include "ints.h"
 
+struct pollfd;
 struct sockaddr;
+struct alloc;
 
 #define MAX(X,Y)	(((X) >= (Y)) ? (X) : (Y))
 #define MIN(X,Y)	(((X) >= (Y)) ? (Y) : (X))
@@ -27,6 +29,18 @@ int do_close(int fd);
  * Wrapper around accept() that handles EINTR.
  */
 int do_accept(int sockfd, struct sockaddr *addr, ll *addrlen);
+
+/*
+ * Wrapper around connect() that handles EINTR.
+ */
+int do_connect(int sockfd, struct sockaddr *addr, ll addrlen);
+
+/*
+ * Wrapper around poll(). In contrast to poll() the number of
+ * structures which have nonzero revents field is returned as
+ * a separate argument.
+ */
+int do_poll(struct pollfd *fds, int nfds, int timeout, int *num);
 
 /*
  * Our version of xstrup which uses the allocator alloc.

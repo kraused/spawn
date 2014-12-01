@@ -3,11 +3,13 @@
 #include <string.h>
 #include <stdio.h>
 
+#include <poll.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <sys/un.h>
@@ -16,6 +18,7 @@
 #include "compiler.h"
 #include "helper.h"
 #include "error.h"
+#include "alloc.h"
 
 
 int do_close(int fd)
@@ -30,7 +33,7 @@ int do_close(int fd)
 
 			error("close() failed. errno = %d says '%s'.",
 			      errno, strerror(errno));
-			return -1;
+			return -errno;
 		}
 
 		break;
@@ -69,6 +72,53 @@ int do_accept(int sockfd, struct sockaddr *addr, ll *addrlen)
 		*addrlen = len;
 
 	return fd;
+}
+
+int do_connect(int sockfd, struct sockaddr *addr, ll addrlen)
+{
+	int fd;
+
+	while (1) {
+		fd = connect(sockfd, addr, addrlen);
+		if (unlikely(fd < 0)) {
+			if (likely(EINTR == errno || EAGAIN == errno))
+				continue;
+
+			error("connect() failed. errno = %d says '%s'.",
+			      errno, strerror(errno));
+			return -errno;
+		}
+
+		break;
+	}
+
+	return fd;
+}
+
+int do_poll(struct pollfd *fds, int nfds, int timeout, int *num)
+{
+	int err;
+
+	while (1) {
+		err = poll(fds, nfds, timeout);
+		if (unlikely(err < 0)) {
+			if (likely(EINTR == errno))
+				continue;
+
+			error("poll() failed. errno = %d says '%s'.",
+			      errno, strerror(errno));
+			return -errno;
+		}
+
+		break;
+	}
+
+	/* If err is >= 0 this equals the number of structures in which
+	 * the revents member is nonzero. */
+	*num = err;
+
+	return 0;
+
 }
 
 int xstrdup(struct alloc *alloc, const char *istr, char **ostr)
@@ -116,6 +166,8 @@ int array_of_str_dup(struct alloc *alloc, int n, const char **istr,
 	return 0;
 
 fail:
+	assert(err);
+
 	for (i = 0; i < n; ++i) {
 		if (!(*ostr)[i])
 			break;
