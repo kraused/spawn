@@ -25,6 +25,7 @@
 #include "comm.h"
 #include "atomic.h"
 #include "helper.h"
+#include "watchdog.h"
 
 #include "devel.h"
 
@@ -332,9 +333,16 @@ static int _main_on_other(struct spawn *spawn, int argc, char **argv)
 		return err;
 	}
 
-/* ************************************************************ */
-	/* FIXME Start watchdog thread! */
-/* ************************************************************ */
+	err = let_the_watchog_loose(60);	/* FIXME Make this parameter configurable.
+						 *	 But if it is configurable we cannot
+						 *       start the watchdog here but first
+						 *       need to receive the options from
+						 *       the father.
+						 */
+	if (unlikely(err)) {
+		error("Failed to start the watchdog thread.");
+		/* continue anyway. */
+	}
 
 	err = _join(spawn);
 	if (unlikely(err)) {
