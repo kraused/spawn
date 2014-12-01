@@ -11,6 +11,7 @@
 struct sockaddr;
 
 struct alloc;
+struct message_header;
 struct exec_plugin;
 
 
@@ -96,6 +97,11 @@ int spawn_comm_start(struct spawn *self);
  * Halt the communication module. Close the listenfd.
  */
 int spawn_comm_halt(struct spawn *self);
+
+/*
+ * Send a message.
+ */
+int spawn_send_message(struct spawn *self, struct message_header *header, void *msg);
 
 #endif
 

@@ -197,6 +197,47 @@ int spawn_comm_halt(struct spawn *self)
 	return 0;
 }
 
+int spawn_send_message(struct spawn *self, struct message_header *header, void *msg)
+{
+	struct buffer *buffer;
+	int err, tmp;
+
+	err = buffer_pool_pull(&self->bufpool, &buffer);
+	if (unlikely(err)) {
+		error("Failed to obtain buffer.");
+		return err;
+	}
+
+	err = pack_message(buffer, header, msg);
+	if (unlikely(err)) {
+		/* FIXME How to handle these kind of errors? We need some
+		 *       appropriate reaction strategy and recovery option
+		 *       otherwise all this error handling would just be
+		 *       a waste of time and we would be better off just
+		 *       calling die() anytime we hit a problem.
+		 */
+		fcallerror("pack_message", err);
+		goto fail;
+	}
+
+	err = comm_enqueue(&self->comm, buffer);
+	if (unlikely(err)) {
+		fcallerror("comm_enqueue", err);
+		goto fail;
+	}
+
+	return 0;
+
+fail:
+	assert(err);
+
+	tmp = buffer_pool_push(&self->bufpool, buffer);
+	if (unlikely(tmp))
+		fcallerror("buffer_pool_push", tmp);
+
+	return err;
+}
+
 
 static int _copy_hosts(struct spawn *self, int nhosts, const char **hosts)
 {
