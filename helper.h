@@ -58,5 +58,10 @@ int array_of_str_dup(struct alloc *alloc, int n, const char **istr,
  */
 int array_of_str_free(struct alloc *alloc, int n, char ***str);
 
+/*
+ * Daemonize the process.
+ */
+int daemonize();
+
 #endif
 

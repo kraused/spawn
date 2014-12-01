@@ -188,3 +188,42 @@ int array_of_str_free(struct alloc *alloc, int n, char ***str)
 	return -ENOTIMPL;
 }
 
+int daemonize()
+{
+	ll p;
+
+	umask(0);	/* umask() always succeeds. */
+
+	p = fork();
+	if (unlikely(-1 == p)) {
+		error("fork() failed. errno = %d says '%s'.",
+		      errno, strerror(errno));
+		return -errno;
+	}
+	if (p) {
+		exit(0);
+	}
+
+	p = setsid();
+	if (-1 == p) {
+		error("setsid() failed. errno = %d says '%s'.",
+		      errno, strerror(errno));
+		return -errno;
+
+	}
+
+	p = fork();
+	if (unlikely(-1 == p)) {
+		error("fork() failed. errno = %d says '%s'.",
+		      errno, strerror(errno));
+		return -errno;
+	}
+	if (p) {
+		exit(0);
+	}
+
+	/* Do not chdir("/"). */
+
+	return 0;
+}
+
