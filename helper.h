@@ -12,6 +12,13 @@ struct sockaddr;
 #define ARRAYLEN(A)	((sizeof((A)))/(sizeof((A)[0])))
 
 /*
+ * Convert four integers to a 32-bit IPv4 address in host
+ * byte order.
+ */
+#undef  IP4ADDR
+#define IP4ADDR(x,y,z,w) ((x ## u << 24) | (y ## u << 16) << (z ## u << 8) | (w ## u))
+
+/*
  * Wrapper around close() that handles EINTR.
  */
 int do_close(int fd);
