@@ -48,15 +48,42 @@ int buffer_clear(struct buffer *self);
  * Change the position pointer in the buffer. This is useful for example in order to
  * write the header (which does contain the payload size) after having filled the buffer
  * with the payload.
- * Seeking beyond the size of the buffer is an error.
  */
 int buffer_seek(struct buffer *self, ll pos);
+
+/*
+ * Resize the buffer. It is an error if size is smaller than the current position value.
+ */
+int buffer_resize(struct buffer *self, ll size);
 
 /*
  * Query the buffer size. Note that this is not equal to the amount of memory allocated
  * for the struct buffer.
  */
-ll buffer_size(struct buffer *self);
+static inline ll buffer_size(struct buffer *self)
+{
+	return self->size;
+}
+
+/*
+ * Check if the buffer position and size coincide.
+ */
+static inline int buffer_pos_equal_size(struct buffer *self)
+{
+	return (self->pos == self->size);
+}
+
+/*
+ * Write a buffer to fd. Advance the position pointer by the
+ * number of bytes written.
+ */
+int buffer_write(struct buffer *self, int fd);
+
+/*
+ * Read buffer content from fd. Advance the position pointer by the
+ * number of bytes written.
+ */
+int buffer_read(struct buffer *self, int fd);
 
 /*
  * Pack and unpack values. Note that the number of elements is not stored in the buffer. If

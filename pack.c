@@ -76,9 +76,13 @@ int buffer_seek(struct buffer *self, ll pos)
 		return -EINVAL;
 
 	if (unlikely(pos > self->memsize)) {
-		err = _buffer_realloc(self, 2*self->memsize);
+		/* FIXME Using pos here is a pretty bad idea since
+		 *       a subsequent pack function will again cause
+		 *       a reallocation.
+		 */
+		err = buffer_resize(self, pos);
 		if (unlikely(err)) {
-			fcallerror("_buffer_realloc", err);
+			fcallerror("buffer_resize", err);
 			return err;
 		}
 	}
@@ -89,12 +93,57 @@ int buffer_seek(struct buffer *self, ll pos)
 	return 0;
 }
 
-ll buffer_size(struct buffer *self)
+int buffer_resize(struct buffer *self, ll size)
 {
-	if (unlikely(!self))
+	int err;
+
+	if (unlikely(!self || size < 0))
 		return -EINVAL;
 
-	return self->size;
+	if (self->pos > size)
+		return -EINVAL;
+
+	if (unlikely(size > self->memsize)) {
+		err = _buffer_realloc(self, size);
+		if (unlikely(err)) {
+			fcallerror("_buffer_realloc", err);
+			return err;
+		}
+	}
+
+	self->size = size;
+
+	return 0;
+}
+
+int buffer_write(struct buffer *self, int fd)
+{
+	int err;
+	ll bytes;
+
+	err = do_write(fd, ((char *)self->buf) + self->pos,
+	               self->size - self->pos, &bytes);
+	if (unlikely(err))
+		return err;
+
+	self->pos += bytes;
+
+	return 0;
+}
+
+int buffer_read(struct buffer *self, int fd)
+{
+	int err;
+	ll bytes;
+
+	err = do_read(fd, ((char *)self->buf) + self->pos,
+	              self->size - self->pos, &bytes);
+	if (unlikely(err))
+		return err;
+
+	self->pos += bytes;
+
+	return 0;
 }
 
 /* TODO Better strategies than just doubling the sizes exist.
@@ -127,7 +176,7 @@ int buffer_unpack_ ## T(struct buffer *self, T *value, ll num)		\
 	if (unlikely(!self || !value || (num < 0))) 			\
 		return -EINVAL;						\
 									\
-	if (unlikely(self->pos + num*sizeof(T) > self->memsize)) {	\
+	if (unlikely(self->pos + num*sizeof(T) > self->size)){		\
 		error("Reached end of buffer.");			\
 		return -ESOMEFAULT;					\
 	}								\
