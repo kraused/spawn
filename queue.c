@@ -20,7 +20,7 @@ int queue_ctor(struct queue *self, struct alloc *alloc, ll capacity)
 	err = ZALLOC(alloc, (void **)&self->buf, capacity,
 	             sizeof(void *), "queue");
 	if (unlikely(err)) {
-		error("ZALLOC() failed with error %d.", err);
+		fcallerror("ZALLOC", err);
 		return err;
 	}
 
@@ -39,7 +39,7 @@ int queue_dtor(struct queue *self)
 	err = ZFREE(self->alloc, (void **)&self->buf, self->capacity,
 	            sizeof(void *), "queue");
 	if (unlikely(err)) {
-		error("ZFREE() failed with error %d.", err);
+		fcallerror("ZFREE", err);
 		return err;
 	}
 
@@ -64,7 +64,7 @@ int queue_change_capacity(struct queue *self, ll capacity)
 	err = ZALLOC(self->alloc, (void **)&buf, capacity,
 	             sizeof(void *), "queue");
 	if (unlikely(err)) {
-		error("ZALLOC() failed with error %d.", err);
+		fcallerror("ZALLOC", err);
 		return err;
 	}
 
@@ -74,7 +74,7 @@ int queue_change_capacity(struct queue *self, ll capacity)
 	err = ZFREE(self->alloc, (void **)&self->buf, self->capacity,
 	            sizeof(void *), "queue");
 	if (unlikely(err)) {
-		error("ZFREE() failed with error %d.", err);
+		fcallerror("ZFREE", err);
 		return err;
 	}
 

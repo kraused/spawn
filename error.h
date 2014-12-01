@@ -24,6 +24,12 @@ void spawn_warn(const char* file, const char* func, long line, const char* fmt, 
 void spawn_log(const char* file, const char* func, long line, const char* fmt, ...);
 void spawn_debug(const char* file, const char* func, long line, const char* fmt, ...);
 
+/*
+ * Macro used to report error values returned by a function call in a convenient,
+ * short and streamlined fashion.
+ */
+#define fcallerror(F, retval)	error(#F "() failed with error %d.", err)
+
 
 /*
  * Terminate the application.

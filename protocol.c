@@ -196,7 +196,7 @@ static int _alloc_message_something(struct alloc *alloc, int type, void **msg)
 	}
 
 	if (unlikely(err)) {
-		error("ZALLOC() failed with error %d.", err);
+		fcallerror("ZALLOC", err);
 		return err;
 	}
 

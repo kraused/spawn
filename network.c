@@ -32,7 +32,7 @@ int network_lock_acquire(struct network *self)
 
 	err = lock_acquire(&self->lock);
 	if (unlikely(err)) {
-		error("lock_acquire() failed with error %d.", err);
+		fcallerror("lock_acquire", err);
 		return err;
 	}
 
@@ -45,7 +45,7 @@ int network_lock_release(struct network *self)
 
 	err = lock_release(&self->lock);
 	if (unlikely(err)) {
-		error("lock_release() failed with error %d.", err);
+		fcallerror("lock_release", err);
 		return err;
 	}
 
@@ -67,7 +67,7 @@ int network_resize(struct network *self, int size)
 	err = ZALLOC(self->alloc, (void **)&self->lft, size,
 	             sizeof(si32), "lft");
 	if (unlikely(err)) {
-		error("ZALLOC() failed with error %d.", err);
+		fcallerror("ZALLOC", err);
 		return err;
 	}
 
@@ -87,7 +87,7 @@ int network_add_ports(struct network *self, int *fds, int nfds)
 	              (self->nports + nfds), sizeof(int),
 	              "ports");
 	if (unlikely(err)) {
-		error("REALLOC() failed with error %d.", err);
+		fcallerror("REALLOC", err);
 		return err;
 	}
 

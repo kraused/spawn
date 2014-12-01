@@ -17,19 +17,19 @@ int thread_ctor(struct thread *self)
 
 	err = pthread_cond_init(&self->cond, NULL);
 	if (unlikely(err)) {
-		error("pthread_cond_init() failed with error %d.", err);
+		fcallerror("pthread_cond_init", err);
 		return err;
 	}
 
 	err = pthread_mutex_init(&self->mutex, NULL);
 	if (unlikely(err)) {
-		error("pthread_mutex_init() failed with error %d.", err);
+		fcallerror("pthread_mutex_init", err);
 		goto fail1;
 	}
 
 	err = pthread_create(&self->handle, NULL, _thread_main, self);
 	if (unlikely(err)) {
-		error("pthread_create() failed with error %d.", err);
+		fcallerror("pthread_create", err);
 		goto fail2;
 	}
 
@@ -40,14 +40,14 @@ fail2:
 
 	tmp = pthread_mutex_destroy(&self->mutex);
 	if (unlikely(tmp))
-		error("pthread_mutex_destroy() failed with error %d.", tmp);
+		fcallerror("pthread_mutex_destroy", tmp);
 
 fail1:
 	assert(err);
 
 	tmp = pthread_cond_destroy(&self->cond);
 	if (unlikely(tmp))
-		error("pthread_cond_destroy() failed with error %d.", tmp);
+		fcallerror("pthread_cond_destroy", tmp);
 
 	return err;
 }
@@ -58,13 +58,13 @@ int thread_dtor(struct thread *self)
 
 	err = pthread_mutex_destroy(&self->mutex);
 	if (unlikely(err)) {
-		error("pthread_mutex_destroy() failed with error %d.", err);
+		fcallerror("pthread_mutex_destroy", err);
 		return -err;
 	}
 
 	err = pthread_cond_destroy(&self->cond);
 	if (unlikely(err)) {
-		error("pthread_cond_destroy() failed with error %d.", err);
+		fcallerror("pthread_cond_destroy", err);
 		return -err;
 	}
 
@@ -77,7 +77,7 @@ int thread_start(struct thread *self, int (*main)(void *), void *arg)
 
 	err = pthread_mutex_lock(&self->mutex);
 	if (unlikely(err)) {
-		error("pthread_mutex_lock() failed with error %d.", err);
+		fcallerror("pthread_mutex_lock", err);
 		return -err;
 	}
 
@@ -86,13 +86,13 @@ int thread_start(struct thread *self, int (*main)(void *), void *arg)
 
 	err = pthread_mutex_unlock(&self->mutex);
 	if (unlikely(err)) {
-		error("pthread_mutex_unlock() failed with error %d.", err);
+		fcallerror("pthread_mutex_unlock", err);
 		return err;
 	}
 
 	err = pthread_cond_signal(&self->cond);
 	if (unlikely(err)) {
-		error("pthread_cond_signal() failed with error %d.", err);
+		fcallerror("pthread_cond_signal", err);
 		return -err;
 	}
 
@@ -106,7 +106,7 @@ int thread_join(struct thread *self)
 
 	err = pthread_join(self->handle, &p);
 	if (unlikely(err)) {
-		error("pthread_join() failed with error %d.", err);
+		fcallerror("pthread_join", err);
 		return -err;
 	}
 
@@ -124,19 +124,19 @@ int lock_ctor(struct lock *self)
 
 	err = pthread_mutexattr_init(&self->attr);
 	if (unlikely(err)) {
-		error("pthread_mutexattr_init() failed with error %d.", err);
+		fcallerror("pthread_mutexattr_init", err);
 		return -err;
 	}
 
 	err = pthread_mutexattr_settype(&self->attr, PTHREAD_MUTEX_RECURSIVE);
 	if (unlikely(err)) {
-		error("pthread_mutexattr_settype() failed with error %d.", err);
+		fcallerror("pthread_mutexattr_settype", err);
 		return -err;
 	}
 
 	err = pthread_mutex_init(&self->mutex, &self->attr);
 	if (unlikely(err)) {
-		error("pthread_mutex_init() failed with error %d.", err);
+		fcallerror("pthread_mutex_init", err);
 		return -err;
 	}
 
@@ -149,13 +149,13 @@ int lock_dtor(struct lock *self)
 
 	err = pthread_mutex_destroy(&self->mutex);
 	if (unlikely(err)) {
-		error("pthread_mutex_destroy() failed with error %d.", err);
+		fcallerror("pthread_mutex_destroy", err);
 		return -err;
 	}
 
 	err = pthread_mutexattr_destroy(&self->attr);
 	if (unlikely(err)) {
-		error("pthread_mutexattr_destroy() failed with error %d.", err);
+		fcallerror("pthread_mutexattr_destroy", err);
 		return -err;
 	}
 
@@ -169,7 +169,7 @@ int lock_acquire(struct lock *self)
 	while (1) {
 		err = pthread_mutex_lock(&self->mutex);
 		if (unlikely(err)) {
-			error("pthread_mutex_lock() failed with error %d.", err);
+			fcallerror("pthread_mutex_lock", err);
 			return -err;
 		}
 
@@ -186,7 +186,7 @@ int lock_release(struct lock *self)
 	while (1) {
 		err = pthread_mutex_unlock(&self->mutex);
 		if (unlikely(err)) {
-			error("pthread_mutex_unlock() failed with error %d.", err);
+			fcallerror("pthread_mutex_unlock", err);
 			return err;
 		}
 
@@ -209,21 +209,21 @@ static void *_thread_main(void *arg)
 
 	err = pthread_mutex_lock(&self->mutex);
 	if (unlikely(err)) {
-		error("pthread_mutex_lock() failed with error %d.", err);
+		fcallerror("pthread_mutex_lock", err);
 		pthread_exit(NULL);
 	}
 
 	while (!self->main) {
 		err = pthread_cond_wait(&self->cond, &self->mutex);
 		if (unlikely(err)) {
-			error("pthread_cond_wait() failed with error %d.", err);
+			fcallerror("pthread_cond_wait", err);
 			pthread_exit(NULL);
 		}
 	}
 
 	err = pthread_mutex_unlock(&self->mutex);
 	if (unlikely(err)) {
-		error("pthread_mutex_unlock() failed with error %d.", err);
+		fcallerror("pthread_mutex_unlock", err);
 		pthread_exit(NULL);
 	}
 

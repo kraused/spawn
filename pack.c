@@ -33,7 +33,7 @@ int buffer_ctor(struct buffer *self, struct alloc *alloc, ll memsize)
 	err = ZALLOC(self->alloc, (void **)&self->buf,
 	             self->memsize, sizeof(char), "buffer space");
 	if (unlikely(err)) {
-		error("ZALLOC() failed with error %d.", err);
+		fcallerror("ZALLOC", err);
 		return err;
 	}
 
@@ -50,7 +50,7 @@ int buffer_dtor(struct buffer *self)
 	err = ZFREE(self->alloc, (void **)&self->buf,
 	            self->memsize, sizeof(char), "");
 	if (unlikely(err)) {
-		error("ZFREE() failed with error %d.", err);
+		fcallerror("ZFREE", err);
 		return err;
 	}
 
@@ -78,8 +78,7 @@ int buffer_seek(struct buffer *self, ll pos)
 	if (unlikely(pos > self->memsize)) {
 		err = _buffer_realloc(self, 2*self->memsize);
 		if (unlikely(err)) {
-			error("_buffer_realloc() failed with"
-			      " error %d.", err);
+			fcallerror("_buffer_realloc", err);
 			return err;
 		}
 	}
@@ -111,8 +110,7 @@ int buffer_pack_ ## T(struct buffer *self, const T *value, ll num)	\
 	if (unlikely(self->pos + num*sizeof(T) > self->memsize)) {	\
 		err = _buffer_realloc(self, 2*self->memsize);		\
 		if (unlikely(err)) {					\
-			error("_buffer_realloc() failed with"		\
-			      " error %d.", err);			\
+			fcallerror("_buffer_realloc()", err);		\
 			return err;					\
 		}							\
 	}								\
@@ -180,7 +178,7 @@ fail2:
 
 	tmp = queue_dtor(&self->queue);
 	if (unlikely(tmp))
-		error("queue_dtor() failed with error %d.", tmp);
+		fcallerror("queue_dtor", tmp);
 
 fail1:
 	assert(err);
@@ -239,7 +237,6 @@ fail:
 int buffer_pool_push(struct buffer_pool *self, struct buffer *buffer)
 {
 	int err, tmp;
-	ll size;
 
 	if (unlikely(!self || !buffer))
 		return -EINVAL;
@@ -252,21 +249,11 @@ int buffer_pool_push(struct buffer_pool *self, struct buffer *buffer)
 
 	err = queue_enqueue(&self->queue, buffer);
 	if (unlikely(err)) {
-		/* Safe to ignore error. */
-		queue_size(&self->queue, &size);
-
-		/* TODO We could probably do better than doubling the size. */
-		err = queue_change_capacity(&self->queue, 2*size);
-		if (unlikely(err)) {
-			error("queue_change_capacity() failed with error %d.", err);
-			goto fail;
-		}
-
-		/* FIXME 1K buffer size should be configurable. */
-		err = _enqueue_bunch_of_buffers(self, size, 1024);
-		if (unlikely(err))
-			goto fail;	/* _enqueue_bunch_of_buffers()
-					 * reports reason. */
+		/* Hitting the capacity should not be an issue since we only
+		 * allow buffers to be pushed that have been pulled before.
+		 */
+		fcallerror("queue_enqueue", err);
+		goto fail;
 	}
 
 	/* Duplication is unfortunately necessary for proper error
@@ -293,6 +280,7 @@ fail:
 int buffer_pool_pull(struct buffer_pool *self, struct buffer **buffer)
 {
 	int err, tmp;
+	ll size;
 
 	err = lock_acquire(&self->lock);
 	if (unlikely(err)) {
@@ -300,10 +288,33 @@ int buffer_pool_pull(struct buffer_pool *self, struct buffer **buffer)
 		return err;
 	}
 
+dequeue:
 	err = queue_dequeue(&self->queue, (void **)buffer);
 	if (unlikely(err)) {
-		error("queue_dequeue() failed with error %d.", err);
-		goto fail;
+		if (unlikely(-ENOENT != err)) {
+			fcallerror("queue_dequeue", err);
+			goto fail;
+		}
+
+		/* Safe to ignore error. */
+		queue_size(&self->queue, &size);
+
+		/* TODO We could probably do better than doubling the size. */
+		err = queue_change_capacity(&self->queue, 2*size);
+		if (unlikely(err)) {
+			fcallerror("queue_change_capacity", err);
+			goto fail;
+		}
+
+		/* FIXME 1K buffer size should be configurable. */
+		err = _enqueue_bunch_of_buffers(self, size, 1024);
+		if (unlikely(err))
+			goto fail;	/* _enqueue_bunch_of_buffers()
+					 * reports reason. */
+
+		log("Increased buffer pool size from %d to %d.", size, 2*size);
+
+		goto dequeue;	/* try again. */
 	}
 
 	err = lock_release(&self->lock);
@@ -336,7 +347,7 @@ static int _buffer_realloc(struct buffer *self, ll nmemsize)
 	               self->memsize, sizeof(char),
 	               nmemsize, sizeof(char), "buffer space");
 	if (unlikely(err)) {
-		error("ZREALLOC() failed with error %d.", err);
+		fcallerror("ZREALLOC", err);
 		return err;
 	}
 
@@ -362,7 +373,7 @@ static int _enqueue_bunch_of_buffers(struct buffer_pool *self, ll n, ll memsize)
 		err = MALLOC(self->alloc, (void **)&buffer, 1,
 		             sizeof(struct buffer), "buffer");
 		if (unlikely(err)) {
-			error("MALLOC() failed with error %d.", err);
+			fcallerror("MALLOC", err);
 			return err;
 		}
 
@@ -374,7 +385,7 @@ static int _enqueue_bunch_of_buffers(struct buffer_pool *self, ll n, ll memsize)
 
 		err = queue_enqueue(&self->queue, buffer);
 		if (unlikely(err)) {
-			error("queue_enqueue() failed with error %d.", err);
+			fcallerror("queue_enqueue", err);
 			goto fail2;
 		}
 	}
@@ -394,7 +405,7 @@ fail1:
 	tmp = ZFREE(self->alloc, (void **)&buffer, 1,
 	            sizeof(buffer), "buffer");
 	if (unlikely(tmp))
-		error("ZFREE() failed with error %d.", tmp);
+		fcallerror("ZFREE", tmp);
 
 	return err;
 }
@@ -409,7 +420,7 @@ static int _empty_whole_queue(struct buffer_pool *self)
 		if (-ENOENT == err)
 			break;
 		if (unlikely(err)) {
-			error("queue_dequeue() failed with error %d.", err);
+			fcallerror("queue_dequeue", err);
 			return err;
 		}
 
@@ -427,7 +438,7 @@ static int _empty_whole_queue(struct buffer_pool *self)
 		err = ZFREE(self->alloc, (void **)&buffer, 1,
 		            sizeof(buffer), "buffer");
 		if (unlikely(err)) {
-			error("ZFREE() failed with error %d.", err);
+			fcallerror("ZFREE", err);
 			return err;
 		}
 	}

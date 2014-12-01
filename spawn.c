@@ -234,7 +234,7 @@ static int _alloc_procs(struct spawn *self, int nprocs)
 	err = ZALLOC(self->alloc, (void **)&self->procs, nprocs,
 	             sizeof(struct process), "procs");
 	if (unlikely(err)) {
-		error("ZALLOC() failed with error %d.", err);
+		fcallerror("ZALLOC", err);
 		return err;
 	}
 
@@ -253,7 +253,7 @@ static int _free_procs(struct spawn* self)
 	err = ZFREE(self->alloc, (void **)&self->procs, nprocs,
 	            sizeof(struct process), "procs");
 	if (unlikely(err)) {
-		error("ZFREE() failed with error %d.", err);
+		fcallerror("ZFREE", err);
 		return err;
 	}
 

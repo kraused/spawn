@@ -498,7 +498,7 @@ static int _comm_zalloc_arrays(struct alloc *alloc, int npollfds,
 	err = ZALLOC(alloc, (void **)pollfds, npollfds,
 	             sizeof(struct pollfd), "pollfds");
 	if (unlikely(err)) {
-		error("ZALLOC() failed with error %d.", err);
+		fcallerror("ZALLOC", err);
 		return err;
 	}
 
@@ -506,14 +506,14 @@ static int _comm_zalloc_arrays(struct alloc *alloc, int npollfds,
 		err = ZALLOC(alloc, (void **)recvb, npollfds - 1,
 		             sizeof(void *), "recvb");
 		if (unlikely(err)) {
-			error("ZALLOC() failed with error %d.", err);
+			fcallerror("ZALLOC", err);
 			return err;
 		}
 
 		err = ZALLOC(alloc, (void **)sendb, npollfds - 1,
 		             sizeof(void *), "sendb");
 		if (unlikely(err)) {
-			error("ZALLOC() failed with error %d.", err);
+			fcallerror("ZALLOC", err);
 			return err;
 		}
 	} else {
@@ -535,7 +535,7 @@ static int _comm_zfree_arrays(struct alloc *alloc, int npollfds,
 		err = ZFREE(alloc, (void **)pollfds, npollfds,
 		            sizeof(struct pollfd), "");
 		if (unlikely(err)) {
-			error("ZFREE() failed with error %d.", err);
+			fcallerror("ZFREE", err);
 			return err;
 		}
 	}
@@ -549,7 +549,7 @@ static int _comm_zfree_arrays(struct alloc *alloc, int npollfds,
 		err = ZFREE(alloc, (void **)recvb, npollfds - 1,
 		            sizeof(void *), "");
 		if (unlikely(err)) {
-			error("ZFREE() failed with error %d.", err);
+			fcallerror("ZFREE", err);
 			return err;
 		}
 	}
@@ -563,7 +563,7 @@ static int _comm_zfree_arrays(struct alloc *alloc, int npollfds,
 		err = ZFREE(alloc, (void **)sendb, npollfds - 1,
 		            sizeof(void *), "");
 		if (unlikely(err)) {
-			error("ZFREE() failed with error %d.", err);
+			fcallerror("ZFREE", err);
 			return err;
 		}
 	}
@@ -632,7 +632,7 @@ static int _comm_fill_sendb(struct comm *self)
 
 		err = unpack_message_header(buffer, &header);
 		if (unlikely(err)) {
-			error("unpack_message_header() failed with error %d.", err);
+			fcallerror("unpack_message_header", err);
 			return err;
 		}
 
@@ -656,7 +656,7 @@ static int _comm_fill_sendb(struct comm *self)
 
 				err = _comm_queue_dequeue(&self->sendq, &buffer);
 				if (unlikely(err)) {
-					error("queue_dequeue() failed with error %d.", err);
+					fcallerror("queue_dequeue", err);
 					return err;
 				}
 

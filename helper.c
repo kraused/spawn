@@ -133,7 +133,7 @@ int xstrdup(struct alloc *alloc, const char *istr, char **ostr)
 
 	err = ZALLOC(alloc, (void **)ostr, n, sizeof(char), "xstrdup");
 	if (unlikely(err)) {
-		error("ZALLOC() failed with error %d.", err);
+		fcallerror("ZALLOC", err);
 		return err;
 	}
 
@@ -153,7 +153,7 @@ int array_of_str_dup(struct alloc *alloc, int n, const char **istr,
 
 	err = ZALLOC(alloc, (void **)ostr, n, sizeof(char *), "xstrduplist");
 	if (unlikely(err)) {
-		error("ZALLOC() failed with error %d.", err);
+		fcallerror("ZALLOC", err);
 		return err;
 	}
 
@@ -176,7 +176,7 @@ fail:
 		tmp = FREE(alloc, (void **)&(*ostr)[i], strlen((*ostr)[i]) + 1,
 		           sizeof(char), "");
 		if (unlikely(tmp))
-			error("FREE() failed with error %d.", tmp);
+			fcallerror("FREE", tmp);
 	}
 
 	return err;
