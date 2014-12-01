@@ -46,6 +46,11 @@ static int _comm_transfer_arrays(int npollfds1, struct pollfd *pollfds1,
 static int _comm_fill_sendb(struct comm *self);
 static int _comm_fill_pollfds_events(struct comm *self);
 static int _comm_accept(struct comm *self);
+static int _comm_reads(struct comm *self);
+static int _comm_writes(struct comm *self);
+static int _comm_pull_recvb(struct comm *self, int i);
+static int _comm_resize_recvb(struct comm *self, int i);
+static int _secretly_copy_header(struct buffer *buffer, struct message_header *header);
 
 
 int comm_ctor(struct comm *self, struct alloc *alloc,
@@ -128,7 +133,7 @@ int comm_start_processing(struct comm *self)
 
 	err = thread_start(&self->thread, _comm_thread, self);
 	if (unlikely(err)) {
-		error("Failed to create communication thread (error %d).", err);
+		error("Failed to start communication thread (error %d).", err);
 		return err;
 	}
 
@@ -230,6 +235,14 @@ static int _comm_thread(void *arg)
 			goto unlock;
 
 		err = _comm_accept(self);
+		if (unlikely(err))
+			goto unlock;
+
+		err = _comm_reads(self);
+		if (unlikely(err))
+			goto unlock;
+
+		err = _comm_writes(self);
 		if (unlikely(err))
 			goto unlock;
 
@@ -606,11 +619,12 @@ static int _comm_transfer_arrays(int npollfds1, struct pollfd *pollfds1,
 	 *       In this case we forget about buffers and introduce a leak.
 	 */
 
-	for (i = 1; i < npollfds2; ++i)
-		for (j = 1; j < npollfds1; ++j)
+	for (i = 0; i < npollfds2 - 1; ++i)
+		for (j = 0; j < npollfds1 -1; ++j)
 			if (pollfds2[i].fd == pollfds1[j].fd) {
 				sendb2[i] = sendb1[j];
 				recvb2[i] = recvb1[j];
+
 				break;
 			}
 
@@ -630,11 +644,9 @@ static int _comm_fill_sendb(struct comm *self)
 		if (unlikely(err))
 			return err;
 
-		err = unpack_message_header(buffer, &header);
-		if (unlikely(err)) {
-			fcallerror("unpack_message_header", err);
+		err = _secretly_copy_header(buffer, &header);
+		if (unlikely(err))
 			return err;
-		}
 
 		if (MESSAGE_FLAG_BCAST & header.flags) {
 			/* FIXME This is not really optimal. We are draining all
@@ -670,6 +682,15 @@ static int _comm_fill_sendb(struct comm *self)
 		err = _comm_queue_dequeue(&self->sendq, (void *)&buffer);
 		if (unlikely(err))
 			return err;
+
+		/* We use the position pointer as a write */
+		err = buffer_seek(buffer, 0);
+		if (unlikely(err)) {
+			fcallerror("buffer_seek", err);
+			die();	/* Pretty much impossible anyway
+				 * so why bother?
+				 */
+		}
 
 		if (MESSAGE_FLAG_BCAST & header.flags) {
 			for (i = 0; i < self->npollfds - 1; ++i)
@@ -730,6 +751,184 @@ static int _comm_accept(struct comm *self)
 	if (unlikely(-1 != tmp)) {
 		error("Detected unexpected write to net->newfd.");
 		die();
+	}
+
+	return 0;
+}
+
+static int _comm_reads(struct comm *self)
+{
+	int err;
+	int i;
+
+	for (i = 0; i < self->npollfds - 1; ++i) {
+		if (!(self->pollfds[i+1].revents & POLLIN))
+			continue;
+
+		if (!self->recvb[i]) {
+			err = _comm_pull_recvb(self, i);
+			if (unlikely(err))
+				continue;
+		}
+
+		err = buffer_read(self->recvb[i], self->pollfds[i+1].fd);
+		if (unlikely(err)) {
+			fcallerror("buffer_read", err);
+			continue;
+		}
+
+		if (!buffer_pos_equal_size(self->recvb[i]))
+			continue;
+
+		/* The protocol asserts that the payload size
+		 * is positive. If the buffer size equals the
+		 * header size we know that we have only read
+		 * the header. */
+		if (sizeof(struct message_header) ==
+		                buffer_size(self->recvb[i])) {
+			err = _comm_resize_recvb(self, i);
+			if (unlikely(err))
+				die();		/* We probably received a malformed
+						 * message. If we try to continue
+						 * a lot of bad things may happen.
+						 * Better to stop here. */
+		} else {
+			/* FIXME We still need to handle routing here. */
+
+			err = buffer_seek(self->recvb[i], 0);
+			if (unlikely(err)) {
+				fcallerror("buffer_seek", err);
+				die();
+			}
+
+			err = _comm_queue_enqueue(&self->recvq, self->recvb[i]);
+			if (unlikely(err))
+				fcallerror("_comm_queue_enqueue", err);
+				/* Will cause a memory leak that we just
+				 * have to live with. */
+
+			self->recvb[i] = NULL;
+		}
+	}
+
+	return 0;
+}
+
+static int _comm_writes(struct comm *self)
+{
+	int err;
+	int i;
+
+	for (i = 0; i < self->npollfds - 1; ++i) {
+		if (!(self->pollfds[i+1].revents & POLLOUT))
+			continue;
+		if (!self->sendb[i])
+			continue;
+
+		err = buffer_write(self->sendb[i], self->pollfds[i+1].fd);
+		if (unlikely(err)) {
+			fcallerror("buffer_write", err);
+			continue;
+		}
+
+		if (buffer_pos_equal_size(self->sendb[i])) {
+			err = buffer_pool_push(self->bufpool, self->sendb[i]);
+			if (unlikely(err))
+				fcallerror("buffer_pool_push", err);
+				/* Will cause a memory leak that we just
+				 * have to live with. */
+
+			self->sendb[i] = NULL;
+		}
+	}
+
+	return 0;
+}
+
+static int _comm_pull_recvb(struct comm *self, int i)
+{
+	int err, tmp;
+
+	err = buffer_pool_pull(self->bufpool, &self->recvb[i]);
+	if (unlikely(err)) {
+		fcallerror("buffer_pool_pull", err);
+		return err;
+	}
+
+	err = buffer_clear(self->recvb[i]);
+	if (unlikely(err)) {
+		fcallerror("buffer_clear", err);
+		goto fail;
+	}
+
+	err = buffer_resize(self->recvb[i],
+	                    sizeof(struct message_header));
+	if (unlikely(err)) {
+		fcallerror("buffer_resize", err);
+		goto fail;
+	}
+
+	return 0;
+
+fail:
+	tmp = buffer_pool_push(self->bufpool, self->recvb[i]);
+	if (unlikely(tmp))
+		fcallerror("buffer_pool_push", tmp);
+
+	return err;
+}
+
+static int _comm_resize_recvb(struct comm *self, int i)
+{
+	int err;
+	struct message_header header;
+	ll size;
+
+	err = _secretly_copy_header(self->recvb[i], &header);
+	if (unlikely(err))
+		return err;
+
+	size = sizeof(struct message_header) + header.payload;
+
+	err = buffer_resize(self->recvb[i], size);
+	if (unlikely(err)) {
+		fcallerror("buffer_resize", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static int _secretly_copy_header(struct buffer *buffer, struct message_header *header)
+{
+	int err;
+	ll pos;
+
+	pos = buffer->pos;
+
+	err = buffer_seek(buffer, 0);
+	if (unlikely(err)) {
+		fcallerror("buffer_seek", err);
+		return err;
+	}
+
+	err = unpack_message_header(buffer, header);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_header", err);
+		return err;
+	}
+
+	/* Check protocol conformity.
+	 */
+	if (unlikely(header->payload < 1)) {
+		error("Invalid payload size %lld.", (ll )header->payload);
+		return -ESOMEFAULT;
+	}
+
+	err = buffer_seek(buffer, pos);
+	if (unlikely(err)) {
+		fcallerror("buffer_seek", err);
+		return err;
 	}
 
 	return 0;
