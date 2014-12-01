@@ -12,6 +12,7 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <sys/un.h>
+#include <fcntl.h>
 
 #include "config.h"
 #include "compiler.h"
@@ -55,28 +56,29 @@ struct _args_other
 	int			here;
 };
 
-static int _main_on_local(struct spawn *spawn, int argc, char **argv);
-static int _main_on_other(struct spawn *spawn, int argc, char **argv);
+static int _main_on_local(int argc, char **argv);
+static int _main_on_other(int argc, char **argv);
 static int _localaddr(struct sockaddr_in *sa);
 static int _parse_argv_on_other(int argc, char **argv, struct _args_other *args);
+static int _redirect_stdio();
 static int _connect_to_father(struct spawn *spawn, struct sockaddr_in *sa);
-static int _join(struct spawn *spawn);
+static int _join(struct spawn *spawn, int father);
+static int _join_send_request(struct spawn *spawn, int father);
+static int _join_recv_response(struct spawn *spawn, int father);
 
 
 int main(int argc, char **argv)
 {
-	struct alloc *alloc;
-	struct spawn spawn;
 	int n, m;
 	int err;
 
-	alloc = libc_allocator_with_debugging();
-
-	err = spawn_ctor(&spawn, alloc);
-	if (unlikely(err)) {
-		error("struct spawn constructor failed with exit code %d.", err);
-		return err;
-	}
+	/* Do as little as possible at this point. _main_on_other() will
+	 * call daemonize() and it is easier to setup everything after
+	 * this point.
+	 * In an earlier version of this code we called spawn_ctor() at
+	 * this point. Since spawn_ctor() created the communication thread
+	 * the fork() in daemonize() destroyed everything.
+	 */
 
 	/* This is a simple method to recognize whether to call
 	 * _main_on_other or _main_on_local. On the remote side
@@ -92,18 +94,12 @@ int main(int argc, char **argv)
 	m = sizeof("libexec/spawn") - 1;
 
 	if ((n >= m) && !strcmp(argv[0] + n - m, "libexec/spawn"))
-		err = _main_on_other(&spawn, argc, argv);
+		err = _main_on_other(argc, argv);
 	else
-		err = _main_on_local(&spawn, argc, argv);
+		err = _main_on_local(argc, argv);
 
 	if (unlikely(err)) {
 		error("main function failed with exit code %d.", err);
-		return err;
-	}
-
-	err = spawn_dtor(&spawn);
-	if (unlikely(err)) {
-		error("struct spawn destructor failed with exit code %d.", err);
 		return err;
 	}
 
@@ -111,32 +107,42 @@ int main(int argc, char **argv)
 }
 
 
-static int _main_on_local(struct spawn *spawn, int argc, char **argv)
+static int _main_on_local(int argc, char **argv)
 {
 	int err;
+	struct alloc *alloc;
+	struct spawn spawn;
 	struct sockaddr_in sa;
+
+	alloc = libc_allocator_with_debugging();
+
+	err = spawn_ctor(&spawn, alloc);
+	if (unlikely(err)) {
+		error("struct spawn constructor failed with exit code %d.", err);
+		return err;
+	}
 
 	/* FIXME parse command line arguments */
 
-	err = spawn_setup_on_local(spawn, devel_nhosts, devel_hostlist, devel_tree_width);
+	err = spawn_setup_on_local(&spawn, devel_nhosts, devel_hostlist, devel_tree_width);
 	if (unlikely(err)) {
 		error("Failed to setup spawn instance.");
 		return err;
 	}
 
-	err = spawn_load_exec_plugin(spawn, EXEC_PLUGIN);
+	err = spawn_load_exec_plugin(&spawn, EXEC_PLUGIN);
 	if (unlikely(err))
 		return err;
 
 	_localaddr(&sa);
 
-	err = spawn_bind_listenfd(spawn, (struct sockaddr *)&sa, sizeof(sa));
+	err = spawn_bind_listenfd(&spawn, (struct sockaddr *)&sa, sizeof(sa));
 	if (unlikely(err)) {
 		error("Failed to bind the listenfd.");
 		return err;
 	}
 
-	err = spawn_comm_start(spawn);
+	err = spawn_comm_start(&spawn);
 	if (unlikely(err)) {
 		error("Failed to start the communication module.");
 		return err;
@@ -155,7 +161,7 @@ static int _main_on_local(struct spawn *spawn, int argc, char **argv)
 
 	{
 		socklen_t len = sizeof(sa);
-		err = getsockname(spawn->tree.listenfd, (struct sockaddr *)&sa, &len);
+		err = getsockname(spawn.tree.listenfd, (struct sockaddr *)&sa, &len);
 		if (unlikely(err < 0)) {
 			error("getsockname() failed. errno = %d says '%s'.", errno, strerror(errno));
 			return -1;
@@ -170,21 +176,23 @@ static int _main_on_local(struct spawn *spawn, int argc, char **argv)
 		snprintf(port, sizeof(port), "%d", (int )ntohs(sa.sin_port));
 	}
 
-	n = (spawn->nhosts + devel_tree_width - 1)/devel_tree_width;
+	n = (spawn.nhosts + devel_tree_width - 1)/devel_tree_width;
 
-	for (i = 0, j = 1; i < spawn->nhosts; i += n, ++j) {
+	for (i = 0, j = 1; i < spawn.nhosts; i += n, ++j) {
 		/* FIXME Threaded spawning! Take devel_fanout into account. */
 		/* At the same time, while spawning we need to accept connections! */
 
 		snprintf(argv1, sizeof(argv1), "%d", 0);		/* my participant id */
-		snprintf(argv2, sizeof(argv2), "%d", spawn->nhosts);	/* size */
+		snprintf(argv2, sizeof(argv2), "%d", spawn.nhosts);	/* size */
 		snprintf(argv3, sizeof(argv3), "%d", i + 1);		/* their participant id */
 
 		char *const argw[] = {SPAWN_EXE_OTHER,
 		                      addr, port,
 		                      argv1, argv2, argv3,
 		                      NULL};
-		err = spawn->exec->ops->exec(spawn->exec, "localhost", argw);
+		err = spawn.exec->ops->exec(spawn.exec, "localhost", argw);
+		if (unlikely(err))
+			die();
 
 		/*
 		 * Wait for connections. Handle the case where a host does not connect back in a sufficient
@@ -192,93 +200,123 @@ static int _main_on_local(struct spawn *spawn, int argc, char **argv)
 		 */
 
 		while (1) {
-			newfd = atomic_read(spawn->tree.newfd);
+			newfd = atomic_read(spawn.tree.newfd);
 			if (-1 != newfd) {
-				tmp = atomic_cmpxchg(spawn->tree.newfd, newfd, -1);
+				tmp = atomic_cmpxchg(spawn.tree.newfd, newfd, -1);
 				if (unlikely(newfd != tmp)) {
 					error("Detected unexpected write to tree.newfd.");
 					die();
 				}
 
-				/* Temporarily disable the communication thread. Otherwise it
-				 * happen that we wait for seconds before acquiring the lock.
-				 * Getting the lock in this situation is a bit overcautious.
-				 */
-				err = comm_stop_processing(&spawn->comm);
-				if (unlikely(err)) {
-					error("Failed to temporarily stop the communication thread.");
-				}
-
-				err = network_lock_acquire(&spawn->tree);
-				if (unlikely(err))
-					die();
-
-				log("Got you: %d", newfd);
+				log("Starting update of spawn.tree");
 
 				/* TODO Keep the ports in a local array. Insert them at a later
 				 *      point all at once!
 				 */
 
-				err = network_lock_release(&spawn->tree);
+				/* Temporarily disable the communication thread. Otherwise it
+				 * happen that we wait for seconds before acquiring the lock.
+				 */
+				err = comm_stop_processing(&spawn.comm);
+				if (unlikely(err)) {
+					error("Failed to temporarily stop the communication thread.");
+				}
+
+				err = network_lock_acquire(&spawn.tree);
 				if (unlikely(err))
 					die();
 
-				err = comm_resume_processing(&spawn->comm);
+				err = network_add_ports(&spawn.tree, &newfd, 1);
+				if (unlikely(err))
+					die();
+
+				tmp = i+1;
+				err = network_modify_lft(&spawn.tree, j-1, &tmp, 1);
+				if (unlikely(err))
+					die();
+
+				err = network_lock_release(&spawn.tree);
+				if (unlikely(err))
+					die();
+
+				err = comm_resume_processing(&spawn.comm);
 				if (unlikely(err)) {
 					error("Failed to resume the communication thread.");
 					die();	/* Pretty much impossible that this happen. If it does
 						 * we are screwed though. */
 				}
 
+				log("Finished updating spawn.tree");
+
 				break;
-			}
+			} else
+				sched_yield();
 		}
 
-#if 0
-		ll addrlen;
-		int sock = do_accept(spawn->tree.listenfd, NULL, NULL);
+		while (1) {
+			struct timespec ts;
+			struct buffer *buffer;
+			struct message_header header;
 
-		log("sock = %d", sock);
+			debug("Calling comm_dequeue()");
 
-		struct message_header header;
-		struct message_request_join msg;
-		struct buffer buffer;
+			/* TODO Use a condition variable to indicate new incoming message?.
+			 *      The pthread_cond_t can be a member of the struct comm_queue.
+			 *      We probably do not need to signal the communication thread since
+			 *      it would need to multiplex between poll() and signal_cond_wait()
+			 *      which is not possible.
+			 */
 
-		buffer_ctor(&buffer, spawn->alloc, 1024);	/* assert(struct(message_header) < 1024)!!! */
+			err = comm_dequeue(&spawn.comm, &buffer);
+			if (-ENOENT == err) {
+				debug("comm_dequeue() returned -ENOENT.");
 
-		buffer.size = read(sock, buffer.buf + buffer.pos, sizeof(header));
-		log("buffer.size = %d %s", buffer.size, strerror(errno));
+				ts.tv_sec  = 1;
+				ts.tv_nsec = 0;
+				nanosleep(&ts, NULL);
 
-		int foo = unpack_message_header(&buffer, &header);
-		log(" foo = %d");
+				continue;
+			}
+			if (unlikely(err))
+				die();
 
-		log("%d %d %d", (int )header.src, (int )header.dst, (int )header.payload);
+			err = unpack_message_header(buffer, &header);
+			if (unlikely(err)) {
+				fcallerror("unpack_message_header", err);
+				break;
+			}
 
-		buffer.size += read(sock, buffer.buf + buffer.pos, header.payload);
+			log("Received a %d message.", header.type);
 
-		foo = unpack_message_payload(&buffer, &header, spawn->alloc, (void *)&msg);
+			err = buffer_pool_push(&spawn.bufpool, buffer);
+			if (unlikely(err))
+				fcallerror("buffer_pool_push", err);
 
-		log(" ###### %d ######", msg.pid);
-
-		buffer_dtor(&buffer);
-#endif
-
-		/* configure lft for hosts in the range ... */
+			break;
+		}
 	}
 /* ************************************************************ */
 
-	err = spawn_comm_halt(spawn);
+	err = spawn_comm_halt(&spawn);
 	if (unlikely(err)) {
 		error("Failed to stop the communication module.");
+		return err;
+	}
+
+	err = spawn_dtor(&spawn);
+	if (unlikely(err)) {
+		error("struct spawn destructor failed with exit code %d.", err);
 		return err;
 	}
 
 	return 0;
 }
 
-static int _main_on_other(struct spawn *spawn, int argc, char **argv)
+static int _main_on_other(int argc, char **argv)
 {
 	int err, tmp;
+	struct alloc *alloc;
+	struct spawn spawn;
 	struct sockaddr_in sa;
 	struct _args_other args;
 
@@ -290,14 +328,26 @@ static int _main_on_other(struct spawn *spawn, int argc, char **argv)
 	if (unlikely(err))
 		return err;
 
+	err = _redirect_stdio();
+	if (unlikely(err))
+		die();
+
 	err = daemonize();
 	if (unlikely(err)) {
-		error("daemonize() failed with error %d.", err);
+		fcallerror("daemonize", err);
 		return err;	/* Failure to daemonize may result in
 				 * deadlocks. */
 	}
 
-	err = spawn_setup_on_other(spawn, args.size, args.here);
+	alloc = libc_allocator_with_debugging();
+
+	err = spawn_ctor(&spawn, alloc);
+	if (unlikely(err)) {
+		error("struct spawn constructor failed with exit code %d.", err);
+		return err;
+	}
+
+	err = spawn_setup_on_other(&spawn, args.size, args.here);
 	if (unlikely(err)) {
 		error("Failed to setup spawn instance.");
 		return err;
@@ -311,23 +361,23 @@ static int _main_on_other(struct spawn *spawn, int argc, char **argv)
 	 *	 properly handle the case where the listenfd is -1.
 	 *	 Which is complicated! It probably is easier to connect listenfd
 	 *       either to /dev/null or bind it to the loopback interface and
-         *       modify it later!
+	 *       modify it later!
 	 */
 	_localaddr(&sa);
 
-	err = spawn_bind_listenfd(spawn, (struct sockaddr *)&sa, sizeof(sa));
+	err = spawn_bind_listenfd(&spawn, (struct sockaddr *)&sa, sizeof(sa));
 	if (unlikely(err)) {
 		error("Failed to bind the listenfd.");
 		return err;
 	}
 
-	err = _connect_to_father(spawn, &args.sa);
+	err = _connect_to_father(&spawn, &args.sa);
 	if (unlikely(err)) {
 		error("Failed to connect to father process.");
 		return err;
 	}
 
-	err = spawn_comm_start(spawn);
+	err = spawn_comm_start(&spawn);
 	if (unlikely(err)) {
 		error("Failed to start the communication module.");
 		return err;
@@ -344,7 +394,7 @@ static int _main_on_other(struct spawn *spawn, int argc, char **argv)
 		/* continue anyway. */
 	}
 
-	err = _join(spawn);
+	err = _join(&spawn, args.father);
 	if (unlikely(err)) {
 		error("Failed to join the network.");
 		goto fail;
@@ -360,16 +410,22 @@ static int _main_on_other(struct spawn *spawn, int argc, char **argv)
 		nanosleep(&ts, NULL);
 	}
 
-	err = spawn_comm_halt(spawn);
+	err = spawn_comm_halt(&spawn);
 	if (unlikely(err)) {
 		error("Failed to halt the communication module.");
+		return err;
+	}
+
+	err = spawn_dtor(&spawn);
+	if (unlikely(err)) {
+		error("struct spawn destructor failed with exit code %d.", err);
 		return err;
 	}
 
 	return 0;
 
 fail:
-	tmp = spawn_comm_halt(spawn);
+	tmp = spawn_comm_halt(&spawn);
 	if (unlikely(tmp))
 		error("Failed to halt the communication module.");
 
@@ -429,6 +485,26 @@ static int _parse_argv_on_other(int argc, char **argv, struct _args_other *args)
 	return 0;
 }
 
+static int _redirect_stdio()
+{
+	int i, fd;
+	char buf[64];
+
+	snprintf(buf, sizeof(buf), "/tmp/spawn-%04d.log", (int )getpid());
+
+	for (i = 1; i < 1024; ++i)
+		close(i);
+
+	fd = open(buf, O_CREAT | O_RDWR);
+	if (unlikely(1 != fd))
+		die();	/* No way to write an error message at this point.
+			 */
+
+	/* FIXME Handle dup() error */
+	dup(1);
+
+	return 0;
+}
 
 static int _connect_to_father(struct spawn *spawn, struct sockaddr_in *sa)
 {
@@ -447,13 +523,13 @@ static int _connect_to_father(struct spawn *spawn, struct sockaddr_in *sa)
 
 	err = network_add_ports(&spawn->tree, &fd, 1);
 	if (unlikely(err)) {
-		error("network_add_ports() failed with error %d.", err);
+		fcallerror("network_add_ports", err);
 		goto fail;
 	}
 
 	err = network_initialize_lft(&spawn->tree, 0);
 	if (unlikely(err)) {
-		error("network_initialize_lft() failed with error %d.", err);
+		fcallerror("network_initialize_lft", err);
 		goto fail;
 	}
 
@@ -467,34 +543,59 @@ fail:
 	return err;
 }
 
-static int _join(struct spawn *spawn)
+static int _join(struct spawn *spawn, int father)
 {
-/* ************************************************************ */
-	/* FIXME Send REQUEST_JOIN. */
-	/* FIXME Recv RESPONSE_JOIN. */
+	int err;
 
-	/*
-	struct message_header header;
+	err = _join_send_request(spawn, father);
+	if (unlikely(err)) {
+		fcallerror("_join_send_request", err);
+		return err;
+	}
+
+/*
+	err = _join_recv_response(spawn, father);
+	if (unlikely(err)) {
+		fcallerror("_join_recv_request", err);
+		return err;
+	}
+*/
+
+	return 0;
+}
+
+static int _join_send_request(struct spawn *spawn, int father)
+{
+	int err;
+
+	struct message_header       header;
 	struct message_request_join msg;
-	struct buffer buffer;
 
 	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
 
-	header.src   = strtol(argv[4], NULL, 10);
-	header.dst   = strtol(argv[3], NULL, 10);
+	header.src   = spawn->tree.here;	/* Always the same */
+	header.dst   = father;
 	header.flags = MESSAGE_FLAG_UCAST;
 	header.type  = REQUEST_JOIN;
 
 	msg.pid = getpid();
 
-	buffer_ctor(&buffer, spawn->alloc, 1024);
+	err = spawn_send_message(spawn, &header, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("spawn_send_message", err);
+		return err;
+	}
 
-	pack_message(&buffer, &header, (void *)&msg);
+	return 0;
+}
 
-	write(sock, buffer.buf, buffer.size);
-	buffer_dtor(&buffer);
-	*/
-/* ************************************************************ */
+static int _join_recv_response(struct spawn *spawn, int father)
+{
+	/* FIXME Poll for a buffer. To avoid congestion on the lock
+	 *       due to an infinite quick lock/unlock loop we should
+	 *       use a pthread_cond_t condition variable.
+	 */
 
 	return -ENOTIMPL;
 }
