@@ -56,5 +56,11 @@ int queue_enqueue(struct queue *self, void *p);
  */
 int queue_dequeue(struct queue *self, void **p);
 
+/*
+ * Peek at the head of the queue. The function returns the same as
+ * queue_dequeue() but does not modify the queue.
+ */
+int queue_peek(struct queue *self, void **p);
+
 #endif
 
