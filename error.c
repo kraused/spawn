@@ -1,11 +1,17 @@
 
+#include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <unistd.h>
+#include <time.h>
+#include <sys/time.h>
 
 #include "config.h"
 #include "compiler.h"
 #include "error.h"
 
+
+static __thread char _msg[4096];
 
 static void _report_to_stderr(const char* prefix, const char* file,
                               const char* func, long line, const char* fmt,
@@ -34,12 +40,12 @@ void spawn_warn(const char* file, const char* func, long line, const char* fmt, 
 	fflush(NULL);
 }
 
-void spawn_info(const char* file, const char* func, long line, const char* fmt, ...)
+void spawn_log(const char* file, const char* func, long line, const char* fmt, ...)
 {
 	va_list vl;
 
 	va_start(vl, fmt);
-	_report_to_stderr("info: ", file, func, line, fmt, vl);
+	_report_to_stderr("", file, func, line, fmt, vl);
 	va_end(vl);
 }
 
@@ -59,10 +65,20 @@ static void _report_to_stderr(const char* prefix, const char* file,
                               const char* func, long line, const char* fmt,
                               va_list vl)
 {
-	static char msg[4096];
-    
-	vsnprintf(msg, sizeof(msg), fmt, vl);
-	fprintf(stderr, " [%s in %s:%ld] %s%s\n", file, func, 
-		line, prefix, msg );
+	char time[64];
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
+	strftime(time, sizeof(time), "%FT%H%M%S", localtime(&tv.tv_sec));
+
+	vsnprintf(_msg, sizeof(_msg), fmt, vl);
+	fprintf(stderr, " %s.%06ld [%04d] (%s(), %s:%ld): %s%s\n",
+	        time, (long )tv.tv_usec, (int )getpid(), func, file, line,
+	        prefix, _msg);
+}
+
+void die()
+{
+	abort();
 }
 
