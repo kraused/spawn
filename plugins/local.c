@@ -55,7 +55,7 @@ static int _exec(struct exec_plugin *self,
 		char *env[] = {NULL};
 
 		execve(argv[0], argv, env);
-		error("execve() failed. errno = %d says '%s'.", 
+		error("execve() failed. errno = %d says '%s'.",
 		      errno, strerror(errno));
 		exit(-1);
 	}
@@ -65,7 +65,9 @@ static int _exec(struct exec_plugin *self,
 		return -errno;
 	}
 
-	/* FIXME Handle EINTR? */
+	log("Child process %d is alive.", (int )child);
+
+	/* TODO Handle EINTR? */
 	p = waitpid(child, &status, 0);
 	if (unlikely(p != child)) {
 		error("waitpid() failed. errno = %d says '%s'.",
@@ -73,8 +75,10 @@ static int _exec(struct exec_plugin *self,
 		return -errno;
 	}
 
+	log("Child process terminated with exit code %d.", WEXITSTATUS(status));
+
 	if (unlikely(!WIFEXITED(status) || 0 != WEXITSTATUS(status))) {
-		error("Child did not execute properly");
+		error("Child did not execute properly.");
 		return -WEXITSTATUS(status);
 	}
 
