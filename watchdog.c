@@ -17,7 +17,7 @@ struct _watchdog
 {
 	struct thread	thread;
 	int		timeout;
-	ll		last;		
+	ll		last;
 } _watchdog;
 
 static int _watchdog_thread(void *args);
@@ -63,6 +63,8 @@ static int _watchdog_thread(void *args)
 	struct _watchdog *self = (struct _watchdog *)args;
 	ll t1, t2;
 
+	log("Watchdog is loose.");
+
 	while (1) {
 		_sleep(self);
 
@@ -90,7 +92,7 @@ static void _sleep(struct _watchdog *self)
 	struct timespec ts;
 
 	ts.tv_sec  = self->timeout + 1;
-	ts.tv_nsec = 0;	
+	ts.tv_nsec = 0;
 
 	nanosleep(&ts, NULL);
 }
@@ -100,7 +102,7 @@ static void _bite()
 	struct timespec ts;
 
 	ts.tv_sec  = 0;
-	ts.tv_nsec = 1000000;	
+	ts.tv_nsec = 1000000;
 
 	while (1) {
 		kill(0, SIGTERM);
