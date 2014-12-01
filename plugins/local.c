@@ -50,6 +50,14 @@ static int _exec(struct exec_plugin *self,
 	long long p;
 	int status;
 
+	if (unlikely(!host))
+		return -EINVAL;
+
+	if (unlikely(!strcmp("localhost", host))) {
+		warn("Spawning process on localhost "
+		     "instead of host '%s'", host);
+	}
+
 	child = fork();
 	if (0 == child) {
 		char *env[] = {NULL};
