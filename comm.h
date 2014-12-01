@@ -40,24 +40,51 @@ struct comm
 	/* Network datastructure required for routing. */
 	struct network		*net;
 
+	/* Buffer pool. Buffers that have been processed will be
+	 * returned to the pool. Receive buffers for incoming
+	 * messages will be taken from the buffer.
+	 */
+	struct buffer_pool	*bufpool;
+
 	/* Queues for send requests and incoming messages. */
 	struct comm_queue	sendq;
 	struct comm_queue	recvq;
 
-	/* Set to one to force the shutdown of the communication
-	 * thread.
+	/* Set to one to force the temporary shutdown of the
+	 * communication thread. Set it to two in order to shutdown
+	 * the communication thread completely.
 	 */
-	volatile int		stop;
+	int			stop;
 
 	/* Thread handle for the communication thread
 	 */
 	struct thread		thread;
+
+	/* For poll() syscall.  Size is (1 + net->nports). */
+	int			npollfds;
+	struct pollfd		*pollfds;
+
+	/* Buffers for currently ongoing send and receive operations
+	 * ordered according to the port. Size is net->nports.
+	 */
+	struct buffer		**recvb;
+	struct buffer		**sendb;
+
+	/* TODO Gather statistics about the length of the waiter queue.
+	 */
+
+	/* Per port queue for send and receive buffers that could not be
+	 * enqueued in one of the other queues or lists because they were
+	 * busy.
+	 */
+	struct queue		*waiter;
 };
 
 /*
  * Constructor for struct comm.
  */
-int comm_ctor(struct comm *self, struct alloc *alloc, struct network *net,
+int comm_ctor(struct comm *self, struct alloc *alloc,
+              struct network *net, struct buffer_pool *bufpool,
               ll sendqsz, ll recvqsz);
 
 /*
@@ -73,9 +100,25 @@ int comm_dtor(struct comm *self);
 int comm_start_processing(struct comm *self);
 
 /*
- * Stop the communication thread.
+ * Temporarily stop the communication thread. This is useful since
+ * the communication thread unfortunately needs to hold the net->lock
+ * almost all of the time. If another thread likes to modify net
+ * it may wait a long time to acquire the lock since it usually is
+ * not a FIFO-type lock. If the communication thread is temporarily
+ * stopped from processing new requests it will not try to acquire the
+ * lock itself.
  */
 int comm_stop_processing(struct comm *self);
+
+/*
+ * Resume the processing.
+ */
+int comm_resume_processing(struct comm *self);
+
+/*
+ * Halt (terminate) the communication thread.
+ */
+int comm_halt_processing(struct comm *self);
 
 /*
  * Enqueue a buffer in the send queue. If the queue is full this call
