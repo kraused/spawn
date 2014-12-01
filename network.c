@@ -74,6 +74,8 @@ int network_resize(struct network *self, int size)
 	for (i = 0; i < size; ++i)
 		self->lft[i] = -1;
 
+	self->size = size;
+
 	return 0;
 }
 
