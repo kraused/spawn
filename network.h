@@ -88,6 +88,10 @@ int network_add_ports(struct network *self, int *fds, int nfds);
 /*
  * Initialize the LFT such that messages to all network participants
  * are routed through the given port.
+ *
+ * FIXME The use of network_initialize_lft() has the disadvantage that
+ *       we will have (seemingly) valid routing entries for potentially
+ *       non-existing hosts.
  */
 int network_initialize_lft(struct network *self, int port);
 
