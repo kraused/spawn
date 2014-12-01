@@ -19,6 +19,7 @@
 #include "spawn.h"
 #include "plugin.h"
 #include "helper.h"
+#include "protocol.h"
 
 
 static int _copy_hosts(struct spawn *self, int nhosts, const char **hosts);
@@ -304,8 +305,7 @@ static int _free_procs(struct spawn* self)
 static int _setup_tree(struct network *self, struct alloc *alloc,
                        int size, int here)
 {
-	int err, tmp;
-	int i;
+	int err;
 
 	if (unlikely(size < 0 || here < 0 || here >= size))
 		return -EINVAL;
