@@ -43,6 +43,18 @@ int do_connect(int sockfd, struct sockaddr *addr, ll addrlen);
 int do_poll(struct pollfd *fds, int nfds, int timeout, int *num);
 
 /*
+ * Wrapper around write() that handles EINTR. The number of bytes
+ * written is returned as last argument.
+ */
+int do_write(int fd, void *buf, ll size, ll *bytes);
+
+/*
+ * Wrapper around read() that handles EINTR. The number of bytes
+ * read is returned as last argument.
+ */
+int do_read(int fd, void *buf, ll size, ll *bytes);
+
+/*
  * Our version of xstrup which uses the allocator alloc.
  */
 int xstrdup(struct alloc *alloc, const char *istr, char **ostr);
@@ -62,6 +74,11 @@ int array_of_str_free(struct alloc *alloc, int n, char ***str);
  * Daemonize the process.
  */
 int daemonize();
+
+/*
+ * Wrapper around syscall(SYS_gettid)
+ */
+ll gettid();
 
 #endif
 

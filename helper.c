@@ -13,6 +13,7 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <sys/un.h>
+#include <sys/syscall.h>
 
 #include "config.h"
 #include "compiler.h"
@@ -121,6 +122,52 @@ int do_poll(struct pollfd *fds, int nfds, int timeout, int *num)
 
 }
 
+int do_write(int fd, void *buf, ll size, ll *bytes)
+{
+	ll x;
+
+	while (1) {
+		x = write(fd, buf, size);
+		if (unlikely(-1 == x)) {
+			if (likely(EINTR == errno))
+				continue;
+
+			error("write() failed. errno = %d says '%s'.",
+			      errno, strerror(errno));
+			return -errno;
+		}
+
+		*bytes = x;
+
+		break;
+	}
+
+	return 0;
+}
+
+int do_read(int fd, void *buf, ll size, ll *bytes)
+{
+	ll x;
+
+	while (1) {
+		x = read(fd, buf, size);
+		if (unlikely(-1 == x)) {
+			if (likely(EINTR == errno))
+				continue;
+
+			error("read() failed. errno = %d says '%s'.",
+			      errno, strerror(errno));
+			return -errno;
+		}
+
+		*bytes = x;
+
+		break;
+	}
+
+	return 0;
+}
+
 int xstrdup(struct alloc *alloc, const char *istr, char **ostr)
 {
 	int err;
@@ -225,5 +272,10 @@ int daemonize()
 	/* Do not chdir("/"). */
 
 	return 0;
+}
+
+ll gettid()
+{
+	return (long )syscall(SYS_gettid);
 }
 
