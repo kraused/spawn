@@ -83,11 +83,16 @@ static int _exec(struct exec_plugin *self,
 		return -errno;
 	}
 
-	log("Child process terminated with exit code %d.", WEXITSTATUS(status));
-
-	if (unlikely(!WIFEXITED(status) || 0 != WEXITSTATUS(status))) {
-		error("Child did not execute properly.");
+	if (likely(WIFEXITED(status))) {
+		log("Child process terminated with exit code %d.", WEXITSTATUS(status));
 		return -WEXITSTATUS(status);
+
+	} else if(WIFSIGNALED(status)) {
+		log("Child was terminated by signal %d.", WTERMSIG(status));
+		return -ESOMEFAULT;
+	} else {
+		error("Child neithr terminated nor was terminated by a signal.");
+		return -ESOMEFAULT;
 	}
 
 	return 0;
