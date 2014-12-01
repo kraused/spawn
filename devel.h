@@ -12,29 +12,30 @@
 
 /*
  * A compressed host list will be the user input. This will be
- * stored somewhere in the option list. 
+ * stored somewhere in the option list.
  *
  * -o Hosts="a[01-10],a15"
  */
-static const char spawn_devel_hosts[] = "a[01-20],a35";
+static const char devel_hosts[] = "a[01-20],a35";
 
 /*
- * The expanded host list will be created from spawn_devel_hosts
+ * The expanded host list will be created from devel_hosts
  * by a function.
  */
-static const char *spawn_devel_hostlist[] = {
+static const char *devel_hostlist[] = {
+	"-",	/* local */
 	"a01", "a02", "a03", "a04", "a05", "a06", "a07", "a08",
 	"a09", "a10", "a11", "a12", "a13", "a14", "a15", "a16",
 	"a17", "a18", "a19", "a20", "a35"
 };
-static const int spawn_devel_nhosts = sizeof(spawn_devel_hostlist)/sizeof(spawn_devel_hostlist[0]);
+static const int devel_nhosts = sizeof(devel_hostlist)/sizeof(devel_hostlist[0]);
 
 /*
  * The tree width is read from the command line.
  *
- * -o TreeWidth=3 
+ * -o TreeWidth=3
  */
-static const int spawn_devel_tree_width = 4;
+static const int devel_tree_width = 20;
 
 /*
  * Fanout width. This parameter specifies how many processes are spawned in parallel. Note
@@ -43,7 +44,7 @@ static const int spawn_devel_tree_width = 4;
  *
  * -o Fanout=128
  */
-static const int spawn_devel_fanout = 2;
+static const int devel_fanout = 2;
 
 /*
  * For testing: Use an incomplete exec plugin that just spawns the process locally.
