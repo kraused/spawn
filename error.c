@@ -9,6 +9,7 @@
 #include "config.h"
 #include "compiler.h"
 #include "error.h"
+#include "helper.h"
 
 
 static __thread char _msg[4096];
@@ -67,14 +68,18 @@ static void _report_to_stderr(const char* prefix, const char* file,
 {
 	char time[64];
 	struct timeval tv;
+	struct tm tm;
 
 	gettimeofday(&tv, NULL);
-	strftime(time, sizeof(time), "%FT%H%M%S", localtime(&tv.tv_sec));
+	localtime_r(&tv.tv_sec, &tm);
+
+	strftime(time, sizeof(time), "%FT%H%M%S", &tm);
 
 	vsnprintf(_msg, sizeof(_msg), fmt, vl);
-	fprintf(stderr, " %s.%06ld [%04d] (%s(), %s:%ld): %s%s\n",
-	        time, (long )tv.tv_usec, (int )getpid(), func, file, line,
+	fprintf(stderr, " %s.%06ld [%04d, %04d] (%s(), %s:%ld): %s%s\n",
+	        time, (long )tv.tv_usec, (int )getpid(), (int )gettid(), func, file, line,
 	        prefix, _msg);
+	fflush(stderr);
 }
 
 void die()
