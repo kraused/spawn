@@ -165,11 +165,15 @@ int buffer_pool_ctor(struct buffer_pool *self, struct alloc *alloc, ll size)
 		goto fail1;
 	}
 
+	self->alloc = alloc;
+
 	/* TODO Make the 1K buffer size configurable. */
 	err = _enqueue_bunch_of_buffers(self, size, 1024);
 	if (unlikely(err))
 		goto fail2;	/* _enqueue_bunch_of_buffers()
 				 * reports reason. */
+
+	return 0;
 
 fail2:
 	assert(err);
@@ -236,6 +240,9 @@ int buffer_pool_push(struct buffer_pool *self, struct buffer *buffer)
 {
 	int err, tmp;
 	ll size;
+
+	if (unlikely(!self || !buffer))
+		return -EINVAL;
 
 	err = lock_acquire(&self->lock);
 	if (unlikely(err)) {
@@ -353,7 +360,7 @@ static int _enqueue_bunch_of_buffers(struct buffer_pool *self, ll n, ll memsize)
 
 	for (i = 0; i < n; ++i) {
 		err = MALLOC(self->alloc, (void **)&buffer, 1,
-		             sizeof(buffer), "buffer");
+		             sizeof(struct buffer), "buffer");
 		if (unlikely(err)) {
 			error("MALLOC() failed with error %d.", err);
 			return err;
