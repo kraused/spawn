@@ -402,18 +402,20 @@ fail1:
 static int _empty_whole_queue(struct buffer_pool *self)
 {
 	int err;
-	ll size;
 	struct buffer *buffer;
 
 	while (1) {
-		queue_size(&self->queue, &size);
-		if (0 == size)
-			break;
-
 		err = queue_dequeue(&self->queue, (void **)&buffer);
+		if (-ENOENT == err)
+			break;
 		if (unlikely(err)) {
 			error("queue_dequeue() failed with error %d.", err);
 			return err;
+		}
+
+		if (unlikely(!buffer)) {
+			error("buffer is NULL.");
+			return -ESOMEFAULT;
 		}
 
 		err = buffer_dtor(buffer);
