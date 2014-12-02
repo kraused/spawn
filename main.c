@@ -617,9 +617,10 @@ static int _join(struct spawn *spawn, int father)
 static int _join_send_request(struct spawn *spawn, int father)
 {
 	int err;
-
 	struct message_header       header;
 	struct message_request_join msg;
+
+	assert(1 == spawn->tree.nports);
 
 	memset(&header, 0, sizeof(header));
 	memset(&msg   , 0, sizeof(msg));
@@ -630,6 +631,10 @@ static int _join_send_request(struct spawn *spawn, int father)
 	header.type  = REQUEST_JOIN;
 
 	msg.pid = getpid();
+
+	err = _sockaddr(spawn->tree.ports[0], &msg.ip, &msg.portnum);
+	if (unlikely(err))
+		return err;
 
 	err = spawn_send_message(spawn, &header, (void *)&msg);
 	if (unlikely(err)) {
