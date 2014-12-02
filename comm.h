@@ -50,6 +50,11 @@ struct comm
 	struct comm_queue	sendq;
 	struct comm_queue	recvq;
 
+	/* Condition variable that threads can block on to be notified
+	 * about the availability of new buffers.
+	 */
+	struct cond_var		cond;
+
 	/* Set to one to force the temporary shutdown of the
 	 * communication thread. Set it to two in order to shutdown
 	 * the communication thread completely.

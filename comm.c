@@ -801,6 +801,16 @@ static int _comm_reads(struct comm *self)
 				die();
 			}
 
+			/* FIXME This is not very efficient. The queue is now protected by
+			 *       two separate locks!
+			 */
+
+			err = cond_var_lock_acquire(&self->cond);
+			if (unlikely(err)) {
+				fcallerror("cond_var_lock_acquire", err);
+				die();
+			}
+
 			err = _comm_queue_enqueue(&self->recvq, self->recvb[i]);
 			if (unlikely(err))
 				fcallerror("_comm_queue_enqueue", err);
@@ -808,6 +818,16 @@ static int _comm_reads(struct comm *self)
 				 * have to live with. */
 
 			self->recvb[i] = NULL;
+
+			err = cond_var_broadcast(&self->cond);
+			if (unlikely(err))
+				fcallerror("lock_var_broadcast", err);
+
+			err = cond_var_lock_release(&self->cond);
+			if (unlikely(err)) {
+				fcallerror("cond_var_lock_release", err);
+				die();
+			}
 		}
 	}
 
