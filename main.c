@@ -603,13 +603,11 @@ static int _join(struct spawn *spawn, int father)
 		return err;
 	}
 
-/*
 	err = _join_recv_response(spawn, father);
 	if (unlikely(err)) {
 		fcallerror("_join_recv_request", err);
 		return err;
 	}
-*/
 
 	return 0;
 }
@@ -647,11 +645,58 @@ static int _join_send_request(struct spawn *spawn, int father)
 
 static int _join_recv_response(struct spawn *spawn, int father)
 {
+	int err;
+	struct buffer *buffer;
+	struct message_header header;
+
 	/* FIXME Poll for a buffer. To avoid congestion on the lock
 	 *       due to an infinite quick lock/unlock loop we should
 	 *       use a pthread_cond_t condition variable.
 	 */
 
-	return -ENOTIMPL;
+	while (1) {
+		err = cond_var_lock_acquire(&spawn->comm.cond);
+		if (unlikely(err)) {
+			fcallerror("cond_var_lock_acquire", err);
+			die();
+		}
+
+		err = cond_var_wait(&spawn->comm.cond);
+		if (unlikely(err)) {
+			fcallerror("cond_var_wait", err);
+			die();
+		}
+
+		err = comm_dequeue(&spawn->comm, &buffer);
+		if (-ENOENT == err) {
+			error("comm_dequeue() returned -ENOENT.");
+			continue;
+		}
+		if (unlikely(err))
+			die();
+
+		err = cond_var_lock_release(&spawn->comm.cond);
+		if (unlikely(err)) {
+			fcallerror("cond_var_lock_release", err);
+			die();
+		}
+
+		err = unpack_message_header(buffer, &header);
+		if (unlikely(err)) {
+			fcallerror("unpack_message_header", err);
+			die();	/* FIXME ?*/
+		}
+
+		/* FIXME What to do with the message? */
+		log("Received a %d message from %d.", header.type, header.src);
+
+		err = buffer_pool_push(&spawn->bufpool, buffer);
+		if (unlikely(err))
+			fcallerror("buffer_pool_push", err);
+
+		break;
+	}
+
+	return 0;
 }
 
