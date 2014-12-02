@@ -75,5 +75,52 @@ int lock_acquire(struct lock *self);
  */
 int lock_release(struct lock *self);
 
+
+/*
+ * A condition variable. Condition variables can be used to wait for the
+ * occurence of certain conditions (as signaled by a concurrent thread) without
+ * need for spinning and the corresponding lock congestion issues.
+ */
+struct cond_var
+{
+	pthread_cond_t		cond;
+	pthread_mutex_t		mutex;
+};
+
+/*
+ * Constructor for struct cond_var.
+ */
+int cond_var_ctor(struct cond_var *self);
+
+/*
+ * Destructor for struct cond_var.
+ */
+int cond_var_dtor(struct cond_var *self);
+
+/*
+ * Acquire the mutex associated with the condition variable.
+ */
+int cond_var_lock_acquire(struct cond_var *self);
+
+/*
+ * Release the mutex associated with the condition variable.
+ */
+int cond_var_lock_release(struct cond_var *self);
+
+/*
+ * Block on the condition variable.
+ */
+int cond_var_wait(struct cond_var *self);
+
+/*
+ * Unblock one thread.
+ */
+int cond_var_signal(struct cond_var *self);
+
+/*
+ * Unblock all threads.
+ */
+int cond_var_broadcast(struct cond_var *self);
+
 #endif
 
