@@ -545,7 +545,7 @@ static int _redirect_stdio()
 	for (i = 1; i < 1024; ++i)
 		close(i);
 
-	fd = open(buf, O_CREAT | O_RDWR);
+	fd = open(buf, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
 	if (unlikely(1 != fd))
 		die();	/* No way to write an error message at this point.
 			 */
