@@ -59,6 +59,8 @@ struct _args_other
 static int _main_on_local(int argc, char **argv);
 static int _main_on_other(int argc, char **argv);
 static int _localaddr(struct sockaddr_in *sa);
+static int _sockaddr(int fd, ui32 *ip, ui32 *portnum);
+static int _peeraddr(int fd, ui32 *ip, ui32 *portnum);
 static int _parse_argv_on_other(int argc, char **argv, struct _args_other *args);
 static int _redirect_stdio();
 static int _connect_to_father(struct spawn *spawn, struct sockaddr_in *sa);
@@ -440,6 +442,54 @@ static int _localaddr(struct sockaddr_in *sa)
 	memset(sa, 0, sizeof(*sa));
 	sa->sin_family = AF_INET;
 	sa->sin_addr.s_addr = htonl(IP4ADDR(127,0,0,1));
+
+	return 0;
+}
+
+static int _sockaddr(int fd, ui32 *ip, ui32 *portnum)
+{
+	int err;
+	struct sockaddr_in sa;
+	socklen_t len;
+
+	len = sizeof(sa);
+	err = getsockname(fd, (struct sockaddr *)&sa, &len);
+	if (unlikely(err < 0)) {
+		error("getsockname() failed. errno = %d says '%s'.", errno, strerror(errno));
+		return -errno;
+	}
+
+	if (unlikely(len != sizeof(sa))) {
+		error("Size mismatch.");
+		return -ESOMEFAULT;
+	}
+
+	*ip      = ntohl(sa.sin_addr.s_addr);
+	*portnum = ntohs(sa.sin_port);
+
+	return 0;
+}
+
+static int _peeraddr(int fd, ui32 *ip, ui32 *portnum)
+{
+	int err;
+	struct sockaddr_in sa;
+	socklen_t len;
+
+	len = sizeof(sa);
+	err = getpeername(fd, (struct sockaddr *)&sa, &len);
+	if (unlikely(err < 0)) {
+		error("getsockname() failed. errno = %d says '%s'.", errno, strerror(errno));
+		return -errno;
+	}
+
+	if (unlikely(len != sizeof(sa))) {
+		error("Size mismatch.");
+		return -ESOMEFAULT;
+	}
+
+	*ip      = ntohl(sa.sin_addr.s_addr);
+	*portnum = ntohs(sa.sin_port);
 
 	return 0;
 }
