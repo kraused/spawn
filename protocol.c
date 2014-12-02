@@ -237,6 +237,12 @@ static int _pack_message_request_join(struct buffer *buffer,
 	err = buffer_pack_ui32(buffer, &msg->pid, 1);
 	if (unlikely(err))
 		return err;
+	err = buffer_pack_ui32(buffer, &msg->ip, 1);
+	if (unlikely(err))
+		return err;
+	err = buffer_pack_ui32(buffer, &msg->portnum, 1);
+	if (unlikely(err))
+		return err;
 
 	return 0;
 }
@@ -247,6 +253,12 @@ static int _unpack_message_request_join(struct buffer *buffer,
 	int err;
 
 	err = buffer_unpack_ui32(buffer, &msg->pid, 1);
+	if (unlikely(err))
+		return err;
+	err = buffer_unpack_ui32(buffer, &msg->ip, 1);
+	if (unlikely(err))
+		return err;
+	err = buffer_unpack_ui32(buffer, &msg->portnum, 1);
 	if (unlikely(err))
 		return err;
 

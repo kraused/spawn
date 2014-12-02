@@ -61,8 +61,10 @@ struct __attribute__((packed)) message_header
 
 struct message_request_join
 {
-	ui32	pid;	/* Process id. 32-bit should be enough on any
-			 * platform I am aware of. */
+	ui32	pid;		/* Process id. 32-bit should be enough on any
+				 * platform I am aware of. */
+	ui32	ip;		/* IPv4 address */
+	ui32	portnum;	/* TCP port */
 };
 
 struct message_response_join
