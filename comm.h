@@ -137,5 +137,13 @@ int comm_enqueue(struct comm *self, struct buffer *buffer);
  */
 int comm_dequeue(struct comm *self, struct buffer **buffer);
 
+/*
+ * The function comm_dequeue_would_succeed() returnes true (1)
+ * if comm_dequeue() would have succeeded and not returned -ENOENT.
+ * Note that a subsequent comm_dequeue() call could still return -ENOENT
+ * if a different thread dequeues a buffer between the two calls.
+ */
+int comm_dequeue_would_succeed(struct comm *self, int *result);
+
 #endif
 

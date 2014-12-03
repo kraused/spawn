@@ -182,6 +182,17 @@ int comm_dequeue(struct comm *self, struct buffer **buffer)
 	return _comm_queue_dequeue(&self->recvq, buffer);
 }
 
+int comm_dequeue_would_succeed(struct comm *self, int *result)
+{
+	ll size;
+	int err;
+
+	err = _comm_queue_size(&self->recvq, &size);
+	*result = (size > 0);
+
+	return err;
+}
+
 
 static int _comm_thread(void *arg)
 {
