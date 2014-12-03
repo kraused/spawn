@@ -61,6 +61,7 @@ static int _main_on_other(int argc, char **argv);
 static int _localaddr(struct sockaddr_in *sa);
 static int _sockaddr(int fd, ui32 *ip, ui32 *portnum);
 static int _peeraddr(int fd, ui32 *ip, ui32 *portnum);
+static int _work_available(struct spawn *spawn);
 static int _parse_argv_on_other(int argc, char **argv, struct _args_other *args);
 static int _redirect_stdio();
 static int _connect_to_father(struct spawn *spawn, struct sockaddr_in *sa);
@@ -151,31 +152,31 @@ static int _main_on_local(int argc, char **argv)
 	}
 
 /* ************************************************************ */
-	char addr[32];
-	char port[32];
+	struct buffer *buffer;
+	struct message_header header;
+
 	char argv1[32];
 	char argv2[32];
 	char argv3[32];
+	char argv4[32];
+	char argv5[32];
 
 	int i, n;
 	int j;
 	int newfd, tmp;
 
 	{
-		socklen_t len = sizeof(sa);
-		err = getsockname(spawn.tree.listenfd, (struct sockaddr *)&sa, &len);
-		if (unlikely(err < 0)) {
-			error("getsockname() failed. errno = %d says '%s'.", errno, strerror(errno));
-			return -1;
-		}
+		struct in_addr in;
+		ui32 ip, portnum;
 
-		if (unlikely(len != sizeof(sa))) {
-			error("Size mismatch.");
-			return -1;
-		}
+		err = _sockaddr(spawn.tree.listenfd, &ip, &portnum);
+		if (unlikely(err))
+			die();
 
-		snprintf(addr, sizeof(addr), "%s", inet_ntoa(sa.sin_addr));
-		snprintf(port, sizeof(port), "%d", (int )ntohs(sa.sin_port));
+		in.s_addr = htonl(ip);
+
+		snprintf(argv1, sizeof(argv1), "%s", inet_ntoa(in));
+		snprintf(argv2, sizeof(argv2), "%d", (int )portnum);
 	}
 
 	n = (spawn.nhosts + devel_tree_width - 1)/devel_tree_width;
@@ -184,37 +185,139 @@ static int _main_on_local(int argc, char **argv)
 		/* FIXME Threaded spawning! Take devel_fanout into account. */
 		/* At the same time, while spawning we need to accept connections! */
 
-		snprintf(argv1, sizeof(argv1), "%d", 0);		/* my participant id */
-		snprintf(argv2, sizeof(argv2), "%d", spawn.nhosts);	/* size */
-		snprintf(argv3, sizeof(argv3), "%d", i + 1);		/* their participant id */
+		snprintf(argv3, sizeof(argv3), "%d", 0);		/* my participant id */
+		snprintf(argv4, sizeof(argv4), "%d", spawn.nhosts);	/* size */
+		snprintf(argv5, sizeof(argv5), "%d", i + 1);		/* their participant id */
 
 		char *const argw[] = {SPAWN_EXE_OTHER,
-		                      addr, port,
-		                      argv1, argv2, argv3,
-		                      NULL};
+		                      argv1, argv2,
+		                      argv3, argv4,
+		                      argv5, NULL};
 		err = spawn.exec->ops->exec(spawn.exec, "localhost", argw);
 		if (unlikely(err))
 			die();
+	}
 
-		/*
-		 * Wait for connections. Handle the case where a host does not connect back in a sufficient
-		 * amount of time or where the exec fails().
-		 */
+	/*
+	 * Wait for connections. Handle the case where a host does not connect back in a sufficient
+	 * amount of time or where the exec fails().
+	 */
 
-		while (1) {
-			newfd = atomic_read(spawn.tree.newfd);
-			if (-1 != newfd) {
-				tmp = atomic_cmpxchg(spawn.tree.newfd, newfd, -1);
-				if (unlikely(newfd != tmp)) {
-					error("Detected unexpected write to tree.newfd.");
+	while (1) {
+		/* FIXME timedwait? to avoid deadlocks? */
+
+		err = cond_var_lock_acquire(&spawn.comm.cond);
+		if (unlikely(err)) {
+			fcallerror("cond_var_lock_acquire", err);
+			die();
+		}
+
+		while (!_work_available(&spawn)) {
+			err = cond_var_wait(&spawn.comm.cond);
+			if (unlikely(err)) {
+				fcallerror("cond_var_wait", err);
+				die();
+			}
+		}
+
+		newfd = atomic_read(spawn.tree.newfd);
+		buffer = NULL;
+
+		err = comm_dequeue(&spawn.comm, &buffer);
+		if (unlikely(err && (-ENOENT != err)))
+			die();
+
+		err = cond_var_lock_release(&spawn.comm.cond);
+		if (unlikely(err)) {
+			fcallerror("cond_var_lock_release", err);
+			die();
+		}
+
+		if (-1 != newfd) {
+			tmp = atomic_cmpxchg(spawn.tree.newfd, newfd, -1);
+			if (unlikely(newfd != tmp)) {
+				error("Detected unexpected write to tree.newfd.");
+				die();
+			}
+
+			err = cond_var_lock_release(&spawn.comm.cond);
+			if (unlikely(err)) {
+				fcallerror("cond_var_lock_release", err);
+				die();
+			}
+
+			/* TODO Keep the ports in a local array. Insert them at a later
+			 *      point all at once!
+			 */
+
+			/* Temporarily disable the communication thread. Otherwise it
+			 * happen that we wait for seconds before acquiring the lock.
+			 */
+			err = comm_stop_processing(&spawn.comm);
+			if (unlikely(err)) {
+				error("Failed to temporarily stop the communication thread.");
+			}
+
+			err = network_lock_acquire(&spawn.tree);
+			if (unlikely(err))
+				die();
+
+			err = network_add_ports(&spawn.tree, &newfd, 1);
+			if (unlikely(err))
+				die();
+
+			err = network_lock_release(&spawn.tree);
+			if (unlikely(err))
+				die();
+
+			err = comm_resume_processing(&spawn.comm);
+			if (unlikely(err)) {
+				error("Failed to resume the communication thread.");
+				die();	/* Pretty much impossible that this happen. If it does
+					 * we are screwed though. */
+			}
+		}
+
+		if (buffer) {
+			err = unpack_message_header(buffer, &header);
+			if (unlikely(err)) {
+				fcallerror("unpack_message_header", err);
+				die();	/* FIXME ?*/
+			}
+
+			log("Received a %d message from %d.", header.type, header.src);
+
+			if (REQUEST_JOIN == header.type)
+			{
+				ui32 ip, portnum;
+				struct message_request_join msg;
+				int found;
+
+				err = unpack_message_payload(buffer, &header, spawn.alloc, (void *)&msg);
+				if (unlikely(err)) {
+					fcallerror("unpack_message_payload", err);
+					die();	/* FIXME ?*/
+				}
+
+				found = -1;
+
+				for (i = 0; i < spawn.tree.nports; ++i) {
+					err = _peeraddr(spawn.tree.ports[i], &ip, &portnum);
+					if (unlikely(err))
+						continue;
+
+					if ((ip == msg.ip) && (portnum == msg.portnum)) {
+						found = i;
+						break;
+					}
+				}
+
+				if (unlikely(found < 0)) {
+					error("Failed to match address with port number.");
 					die();
 				}
 
-				log("Starting update of spawn.tree");
-
-				/* TODO Keep the ports in a local array. Insert them at a later
-				 *      point all at once!
-				 */
+				/* FIXME Return buffer ! */
 
 				/* Temporarily disable the communication thread. Otherwise it
 				 * happen that we wait for seconds before acquiring the lock.
@@ -228,12 +331,14 @@ static int _main_on_local(int argc, char **argv)
 				if (unlikely(err))
 					die();
 
-				err = network_add_ports(&spawn.tree, &newfd, 1);
-				if (unlikely(err))
-					die();
+				log("Routing messages to %d via port %d.", (int )header.src, found);
 
-				tmp = i+1;
-				err = network_modify_lft(&spawn.tree, j-1, &tmp, 1);
+				/* FIXME This is a tree. We know that header.src is responsible for a full
+				 *       range of ports so we can fix the lft here for multiple ports.
+				 */
+
+				tmp = header.src;
+				err = network_modify_lft(&spawn.tree, found, &tmp, 1);
 				if (unlikely(err))
 					die();
 
@@ -248,53 +353,31 @@ static int _main_on_local(int argc, char **argv)
 						 * we are screwed though. */
 				}
 
-				log("Finished updating spawn.tree");
+				{
+					struct message_header        header;
+					struct message_response_join msg;
 
-				break;
-			} else
-				sched_yield();
-		}
+					memset(&header, 0, sizeof(header));
+					memset(&msg   , 0, sizeof(msg));
 
-		while (1) {
-			struct timespec ts;
-			struct buffer *buffer;
-			struct message_header header;
+					header.src   = spawn.tree.here;	/* Always the same */
+					header.dst   = tmp;
+					header.flags = MESSAGE_FLAG_UCAST;
+					header.type  = RESPONSE_JOIN;
 
-			debug("Calling comm_dequeue()");
+					msg.addr = tmp;
 
-			/* TODO Use a condition variable to indicate new incoming message?.
-			 *      The pthread_cond_t can be a member of the struct comm_queue.
-			 *      We probably do not need to signal the communication thread since
-			 *      it would need to multiplex between poll() and signal_cond_wait()
-			 *      which is not possible.
-			 */
-
-			err = comm_dequeue(&spawn.comm, &buffer);
-			if (-ENOENT == err) {
-				debug("comm_dequeue() returned -ENOENT.");
-
-				ts.tv_sec  = 1;
-				ts.tv_nsec = 0;
-				nanosleep(&ts, NULL);
-
-				continue;
+					err = spawn_send_message(&spawn, &header, (void *)&msg);
+					if (unlikely(err)) {
+						fcallerror("spawn_send_message", err);
+						return err;
+					}
+				}
 			}
-			if (unlikely(err))
-				die();
-
-			err = unpack_message_header(buffer, &header);
-			if (unlikely(err)) {
-				fcallerror("unpack_message_header", err);
-				break;
-			}
-
-			log("Received a %d message.", header.type);
 
 			err = buffer_pool_push(&spawn.bufpool, buffer);
 			if (unlikely(err))
 				fcallerror("buffer_pool_push", err);
-
-			break;
 		}
 	}
 /* ************************************************************ */
@@ -494,6 +577,20 @@ static int _peeraddr(int fd, ui32 *ip, ui32 *portnum)
 	return 0;
 }
 
+static int _work_available(struct spawn *spawn)
+{
+	int err;
+	int result;
+
+	err = comm_dequeue_would_succeed(&spawn->comm, &result);
+	if (unlikely(err)) {
+		fcallerror("comm_dequeue_would_succeed", err);
+		return 1;	/* Give it a try. */
+	}
+
+	return (-1 != atomic_read(spawn->tree.newfd) || result);
+}
+
 static int _parse_argv_on_other(int argc, char **argv, struct _args_other *args)
 {
 	int err, p;
@@ -649,11 +746,6 @@ static int _join_recv_response(struct spawn *spawn, int father)
 	struct buffer *buffer;
 	struct message_header header;
 
-	/* FIXME Poll for a buffer. To avoid congestion on the lock
-	 *       due to an infinite quick lock/unlock loop we should
-	 *       use a pthread_cond_t condition variable.
-	 */
-
 	while (1) {
 		err = cond_var_lock_acquire(&spawn->comm.cond);
 		if (unlikely(err)) {
@@ -661,41 +753,43 @@ static int _join_recv_response(struct spawn *spawn, int father)
 			die();
 		}
 
-		err = cond_var_wait(&spawn->comm.cond);
-		if (unlikely(err)) {
-			fcallerror("cond_var_wait", err);
-			die();
+		while (!_work_available(spawn)) {
+			err = cond_var_wait(&spawn->comm.cond);
+			if (unlikely(err)) {
+				fcallerror("cond_var_wait", err);
+				die();
+			}
 		}
 
 		err = comm_dequeue(&spawn->comm, &buffer);
 		if (-ENOENT == err) {
 			error("comm_dequeue() returned -ENOENT.");
-			continue;
+			goto unlock;
 		}
 		if (unlikely(err))
 			die();
 
+unlock:
 		err = cond_var_lock_release(&spawn->comm.cond);
 		if (unlikely(err)) {
 			fcallerror("cond_var_lock_release", err);
 			die();
 		}
 
-		err = unpack_message_header(buffer, &header);
-		if (unlikely(err)) {
-			fcallerror("unpack_message_header", err);
-			die();	/* FIXME ?*/
-		}
-
-		/* FIXME What to do with the message? */
-		log("Received a %d message from %d.", header.type, header.src);
-
-		err = buffer_pool_push(&spawn->bufpool, buffer);
-		if (unlikely(err))
-			fcallerror("buffer_pool_push", err);
-
 		break;
 	}
+
+	err = unpack_message_header(buffer, &header);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_header", err);
+		die();	/* FIXME ?*/
+	}
+
+	/* FIXME Use the message body to check the participant id. */
+
+	err = buffer_pool_push(&spawn->bufpool, buffer);
+	if (unlikely(err))
+		fcallerror("buffer_pool_push", err);
 
 	return 0;
 }
