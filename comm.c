@@ -739,7 +739,7 @@ static int _comm_fill_pollfds_events(struct comm *self)
 
 static int _comm_accept(struct comm *self)
 {
-	int tmp;
+	int err, tmp;
 	int fd;
 
 	if (unlikely(0 == self->npollfds))
@@ -752,6 +752,12 @@ static int _comm_accept(struct comm *self)
 	if (unlikely(fd < 0))
 		return fd;
 
+	err = cond_var_lock_acquire(&self->cond);
+	if (unlikely(err)) {
+		fcallerror("cond_var_lock_acquire", err);
+		die();
+	}
+
 	log("Accepted new connection on fd %d.", fd);
 
 	/* Other threads will only write to newfd if newfd is not equal to -1. We tested
@@ -761,6 +767,16 @@ static int _comm_accept(struct comm *self)
 	tmp = atomic_cmpxchg(self->net->newfd, -1, fd);
 	if (unlikely(-1 != tmp)) {
 		error("Detected unexpected write to net->newfd.");
+		die();
+	}
+
+	err = cond_var_broadcast(&self->cond);
+	if (unlikely(err))
+		fcallerror("lock_var_broadcast", err);
+
+	err = cond_var_lock_release(&self->cond);
+	if (unlikely(err)) {
+		fcallerror("cond_var_lock_release", err);
 		die();
 	}
 
