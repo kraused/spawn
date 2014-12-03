@@ -745,6 +745,7 @@ static int _join_recv_response(struct spawn *spawn, int father)
 	int err;
 	struct buffer *buffer;
 	struct message_header header;
+	struct message_response_join msg;
 
 	while (1) {
 		err = cond_var_lock_acquire(&spawn->comm.cond);
@@ -776,20 +777,39 @@ unlock:
 			die();
 		}
 
+		err = unpack_message_header(buffer, &header);
+		if (unlikely(err)) {
+			fcallerror("unpack_message_header", err);
+			goto push;
+		}
+
+		if (unlikely(RESPONSE_JOIN != header.type)) {
+			error("Received unexpected message of type %d.", header.type);
+			goto push;	/* Drop message and just continue.
+					 */
+		}
+
+		err = unpack_message_payload(buffer, &header, spawn->alloc, (void *)&msg);
+		if (unlikely(err)) {
+			fcallerror("unpack_message_payload", err);
+			goto push;
+		}
+
 		break;
+
+push:
+		err = buffer_pool_push(&spawn->bufpool, buffer);
+		if (unlikely(err))
+			fcallerror("buffer_pool_push", err);
 	}
 
-	err = unpack_message_header(buffer, &header);
-	if (unlikely(err)) {
-		fcallerror("unpack_message_header", err);
-		die();	/* FIXME ?*/
+	if (unlikely(msg.addr != spawn->tree.here)) {
+		error("RESPONSE_JOIN message contains incorrect address %d.", (int )msg.addr);
+		die();	/* Makes no sense to continue.
+			 */
 	}
 
-	/* FIXME Use the message body to check the participant id. */
-
-	err = buffer_pool_push(&spawn->bufpool, buffer);
-	if (unlikely(err))
-		fcallerror("buffer_pool_push", err);
+	log("Succesfully joined the network.");
 
 	return 0;
 }
