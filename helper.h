@@ -80,5 +80,10 @@ int daemonize();
  */
 ll gettid();
 
+/*
+ * Get the seconds since the start of the epoch.
+ */
+ll llnow();
+
 #endif
 
