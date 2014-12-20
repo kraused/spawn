@@ -284,16 +284,14 @@ int cond_var_wait(struct cond_var *self)
 	return 0;
 }
 
-int cond_var_timedwait(struct cond_var *self, int timeout)
+int cond_var_timedwait(struct cond_var *self, struct timespec *abstime)
 {
 	int err;
-	struct timespec ts;
 
-	ts.tv_sec = timeout;
-	ts.tv_nsec = 0;
-
-	err = pthread_cond_timedwait(&self->cond, &self->mutex, &ts);
-	if (unlikely(err && (ETIMEDOUT != err))) {
+	err = pthread_cond_timedwait(&self->cond, &self->mutex, abstime);
+	if (ETIMEDOUT == err)
+		return -err;
+	if (unlikely(err)) {
 		fcallerror("pthread_cond_wait", err);
 		return -err;
 	}
