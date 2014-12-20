@@ -18,6 +18,9 @@ int thread_ctor(struct thread *self)
 	if (unlikely(!self))
 		return -EINVAL;
 
+	self->err   = 0;
+	self->state = THREAD_STATE_INVAL;
+
 	err = pthread_cond_init(&self->cond, NULL);
 	if (unlikely(err)) {
 		fcallerror("pthread_cond_init", err);
@@ -71,6 +74,8 @@ int thread_dtor(struct thread *self)
 		return -err;
 	}
 
+	self->state = THREAD_STATE_INVAL;
+
 	return 0;
 }
 
@@ -117,6 +122,8 @@ int thread_join(struct thread *self)
 		error("_thread_main() did not execute properly.");
 		return -ESOMEFAULT;
 	}
+
+	atomic_write(self->state, THREAD_STATE_JOINED);
 
 	return 0;
 }
@@ -327,6 +334,7 @@ static void *_thread_main(void *arg)
 	struct thread *self = (struct thread *)arg;
 
 	log("Thread %d is alive.", (int )gettid());
+	atomic_write(self->state, THREAD_STATE_INITED);
 
 	if (unlikely(!self)) {
 		error("self pointer is NULL.");
@@ -353,7 +361,12 @@ static void *_thread_main(void *arg)
 		pthread_exit(NULL);
 	}
 
-	self->err = self->main(self->arg);
+	atomic_write(self->state, THREAD_STATE_STARTED);
+
+	err = self->main(self->arg);
+
+	atomic_write(self->err, err);	/* Before updating the state! */
+	atomic_write(self->state, THREAD_STATE_DONE);
 
 	pthread_exit((void *)self);
 }

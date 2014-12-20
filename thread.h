@@ -2,8 +2,21 @@
 #ifndef SPAWN_THREAD_H_INCLUDED
 #define SPAWN_THREAD_H_INCLUDED 1
 
-
 #include <pthread.h>
+#include "atomic.h"
+
+/*
+ * Possible states during the life of a thread.
+ */
+enum
+{
+	THREAD_STATE_INVAL	= 0,
+	THREAD_STATE_INITED,	/* Thread is alive but waiting for work
+				 * (see thread_start()). */
+	THREAD_STATE_STARTED,
+	THREAD_STATE_DONE,
+	THREAD_STATE_JOINED
+};
 
 /*
  * A thread handle.
@@ -21,6 +34,10 @@ struct thread
 	/* Return value of the thread. Do not access before
 	 * thread_join() has been called. */
 	int			err;
+
+	/* Thread state. Kept up-to-date by the thread and
+	 * read-only for others. */
+	int			state;
 };
 
 /*
@@ -45,6 +62,15 @@ int thread_start(struct thread *self, int (*main)(void *), void *arg);
  * structure can be accessed.
  */
 int thread_join(struct thread *self);
+
+/*
+ * Check if a thread is done processing its task (but has not been joined yet).
+ * If thread_is_done() returns true thread_join() will not block.
+ */
+static inline int thread_is_done(struct thread *self)
+{
+	return (THREAD_STATE_DONE == atomic_read(self->state));
+}
 
 /*
  * A reentrant lock
