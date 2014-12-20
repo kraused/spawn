@@ -21,7 +21,6 @@ struct _watchdog
 } _watchdog;
 
 static int _watchdog_thread(void *args);
-static ll _now();
 static void _sleep(struct _watchdog *self);
 static void _bite() __attribute__((noreturn));
 
@@ -37,7 +36,7 @@ int let_the_watchog_loose(int timeout)
 	}
 
 	_watchdog.timeout = timeout;
-	_watchdog.last    = _now();
+	_watchdog.last    = llnow();
 
 	err = thread_start(&_watchdog.thread, _watchdog_thread, &_watchdog);
 	if (unlikely(err)) {
@@ -51,7 +50,7 @@ int let_the_watchog_loose(int timeout)
 
 int calm_the_watchdog()
 {
-	ll t = _now();
+	ll t = llnow();
 	atomic_write(_watchdog.last, t);
 
 	return 0;
@@ -68,7 +67,7 @@ static int _watchdog_thread(void *args)
 	while (1) {
 		_sleep(self);
 
-		t1 = _now();
+		t1 = llnow();
 		t2 = atomic_read(self->last);
 
 		if (unlikely((t1 - t2) > self->timeout)) {
@@ -76,15 +75,6 @@ static int _watchdog_thread(void *args)
 			_bite();
 		}
 	}
-}
-
-static ll _now()
-{
-	struct timeval tv;
-
-	gettimeofday(&tv, NULL);
-
-	return tv.tv_sec;
 }
 
 static void _sleep(struct _watchdog *self)
