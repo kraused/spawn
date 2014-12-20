@@ -113,6 +113,12 @@ int cond_var_lock_release(struct cond_var *self);
 int cond_var_wait(struct cond_var *self);
 
 /*
+ * Block on the condition variable with a timeout value. The function
+ * returns -ETIMEDOUT if the function timed out.
+ */
+int cond_var_timedwait(struct cond_var *self, int timeout);
+
+/*
  * Unblock one thread.
  */
 int cond_var_signal(struct cond_var *self);

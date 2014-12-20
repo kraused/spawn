@@ -1,4 +1,6 @@
 
+#include <time.h>
+
 #include "config.h"
 #include "compiler.h"
 #include "error.h"
@@ -19,7 +21,7 @@ int thread_ctor(struct thread *self)
 	err = pthread_cond_init(&self->cond, NULL);
 	if (unlikely(err)) {
 		fcallerror("pthread_cond_init", err);
-		return err;
+		return -err;
 	}
 
 	err = pthread_mutex_init(&self->mutex, NULL);
@@ -50,7 +52,7 @@ fail1:
 	if (unlikely(tmp))
 		fcallerror("pthread_cond_destroy", tmp);
 
-	return err;
+	return -err;
 }
 
 int thread_dtor(struct thread *self)
@@ -88,7 +90,7 @@ int thread_start(struct thread *self, int (*main)(void *), void *arg)
 	err = pthread_mutex_unlock(&self->mutex);
 	if (unlikely(err)) {
 		fcallerror("pthread_mutex_unlock", err);
-		return err;
+		return -err;
 	}
 
 	err = pthread_cond_signal(&self->cond);
@@ -183,7 +185,7 @@ int lock_release(struct lock *self)
 	err = pthread_mutex_unlock(&self->mutex);
 	if (unlikely(err)) {
 		fcallerror("pthread_mutex_unlock", err);
-		return err;
+		return -err;
 	}
 
 	return 0;
@@ -196,7 +198,7 @@ int cond_var_ctor(struct cond_var *self)
 	err = pthread_cond_init(&self->cond, NULL);
 	if (unlikely(err)) {
 		fcallerror("pthread_cond_init", err);
-		return err;
+		return -err;
 	}
 
 	err = pthread_mutex_init(&self->mutex, NULL);
@@ -214,7 +216,7 @@ fail:
 	if (unlikely(tmp))
 		fcallerror("pthread_cond_destroy", tmp);
 
-	return err;
+	return -err;
 }
 
 int cond_var_dtor(struct cond_var *self)
@@ -256,7 +258,7 @@ int cond_var_lock_release(struct cond_var *self)
 	err = pthread_mutex_unlock(&self->mutex);
 	if (unlikely(err)) {
 		fcallerror("pthread_mutex_unlock", err);
-		return err;
+		return -err;
 	}
 
 	return 0;
@@ -269,7 +271,24 @@ int cond_var_wait(struct cond_var *self)
 	err = pthread_cond_wait(&self->cond, &self->mutex);
 	if (unlikely(err)) {
 		fcallerror("pthread_cond_wait", err);
-		return err;
+		return -err;
+	}
+
+	return 0;
+}
+
+int cond_var_timedwait(struct cond_var *self, int timeout)
+{
+	int err;
+	struct timespec ts;
+
+	ts.tv_sec = timeout;
+	ts.tv_nsec = 0;
+
+	err = pthread_cond_timedwait(&self->cond, &self->mutex, &ts);
+	if (unlikely(err && (ETIMEDOUT != err))) {
+		fcallerror("pthread_cond_wait", err);
+		return -err;
 	}
 
 	return 0;
@@ -282,7 +301,7 @@ int cond_var_signal(struct cond_var *self)
 	err = pthread_cond_signal(&self->cond);
 	if (unlikely(err)) {
 		fcallerror("pthread_cond_signal", err);
-		return err;
+		return -err;
 	}
 
 	return 0;
@@ -295,7 +314,7 @@ int cond_var_broadcast(struct cond_var *self)
 	err = pthread_cond_broadcast(&self->cond);
 	if (unlikely(err)) {
 		fcallerror("pthread_cond_broadcast", err);
-		return err;
+		return -err;
 	}
 
 	return 0;
