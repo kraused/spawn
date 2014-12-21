@@ -156,11 +156,11 @@ static int _pack_message_something(struct buffer *buffer, int type, void *msg)
 	err = -ESOMEFAULT;
 
 	switch (type) {
-	case REQUEST_JOIN:
+	case MESSAGE_TYPE_REQUEST_JOIN:
 		err = _pack_message_request_join(buffer,
 		                    (const struct message_request_join *)msg);
 		break;
-	case RESPONSE_JOIN:
+	case MESSAGE_TYPE_RESPONSE_JOIN:
 		err = _pack_message_response_join(buffer,
 		                    (const struct message_response_join *)msg);
 		break;
@@ -182,11 +182,11 @@ static int _alloc_message_something(struct alloc *alloc, int type, void **msg)
 	err = -ESOMEFAULT;
 
 	switch (type) {
-	case REQUEST_JOIN:
+	case MESSAGE_TYPE_REQUEST_JOIN:
 		err = ZALLOC(alloc, msg, 1, sizeof(struct message_request_join),
 		             "struct message_request_join");
 		break;
-	case RESPONSE_JOIN:
+	case MESSAGE_TYPE_RESPONSE_JOIN:
 		err = ZALLOC(alloc, msg, 1, sizeof(struct message_response_join),
 		             "struct message_response_join");
 		break;
@@ -210,11 +210,11 @@ static int _unpack_message_something(struct buffer *buffer, int type, void *msg)
 	err = -ESOMEFAULT;
 
 	switch (type) {
-	case REQUEST_JOIN:
+	case MESSAGE_TYPE_REQUEST_JOIN:
 		err = _unpack_message_request_join(buffer,
 		                    (struct message_request_join *)msg);
 		break;
-	case RESPONSE_JOIN:
+	case MESSAGE_TYPE_RESPONSE_JOIN:
 		err = _unpack_message_response_join(buffer,
 		                    (struct message_response_join *)msg);
 		break;
