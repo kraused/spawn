@@ -29,7 +29,8 @@ static int _ping(struct spawn *spawn, int timeout);
 static int _handle_accept(struct spawn *spawn, int newfd);
 static int _handle_message(struct spawn *spawn, struct buffer *buffer);
 static int _handle_jobs(struct spawn *spawn);
-static int _handle_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_request_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _send_response_join(struct spawn *spawn, int dest);
 static int _peeraddr(int fd, ui32 *ip, ui32 *portnum);
 
@@ -46,6 +47,10 @@ int loop(struct spawn *spawn)
 
 	while (1) {
 		/* FIXME Handle signals - At least on the master */
+
+		err = _handle_jobs(spawn);
+		if (unlikely(err))
+			die();	/* FIXME */
 
 		_ping(spawn, 60);	/* FIXME timeout value */
 
@@ -94,10 +99,6 @@ int loop(struct spawn *spawn)
 			if (unlikely(err))
 				die();	/* FIXME */
 		}
-
-		err = _handle_jobs(spawn);
-		if (unlikely(err))
-			die();	/* FIXME */
 	}
 
 	return 0;
@@ -211,7 +212,10 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 
 	switch (header.type) {
 	case MESSAGE_TYPE_REQUEST_JOIN:
-		_handle_join(spawn, &header, buffer);
+		_handle_request_join(spawn, &header, buffer);
+		break;
+	case MESSAGE_TYPE_RESPONSE_JOIN:
+		_handle_response_join(spawn, &header, buffer);
 		break;
 	default:
 		error("Dropping unexpected message of type %d from %d.", header.type, header.src);
@@ -255,10 +259,10 @@ static int _handle_jobs(struct spawn *spawn)
 	return 0;
 }
 
-static int _handle_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+static int _handle_request_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
 {
 	int i;
-	int err, tmp;
+	int err, dest;
 	ui32 ip, portnum;
 	struct message_request_join msg;
 	int found;
@@ -289,6 +293,8 @@ static int _handle_join(struct spawn *spawn, struct message_header *header, stru
 
 	log("Routing messages to %d via port %d.", (int )header->src, found);
 
+	dest = header->src;
+
 	/* Temporarily disable the communication thread. Otherwise it
 	 * happen that we wait for seconds before acquiring the lock.
 	 */
@@ -305,8 +311,7 @@ static int _handle_join(struct spawn *spawn, struct message_header *header, stru
 	 *       full range of ports so we can fix the lft here for multiple ports.
 	 */
 
-	tmp = header->src;
-	err = network_modify_lft(&spawn->tree, found, &tmp, 1);
+	err = network_modify_lft(&spawn->tree, found, &dest, 1);
 	if (unlikely(err))
 		die();
 
@@ -321,10 +326,38 @@ static int _handle_join(struct spawn *spawn, struct message_header *header, stru
 			 * we are screwed though. */
 	}
 
-	err = _send_response_join(spawn, header->src);
+	err = _send_response_join(spawn, dest);
 	if (unlikely(err)) {
 		fcallerror("_send_response_join", err);
 		return err;
+	}
+
+	return 0;
+}
+
+static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	int err;
+	struct list *p;
+	struct job *job;
+	struct message_response_join msg;
+
+	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		die();	/* FIXME ?*/
+	}
+
+	if (unlikely(msg.addr != spawn->tree.here)) {
+		error("MESSAGE_TYPE_RESPONSE_JOIN message contains incorrect address %d.", (int )msg.addr);
+		die();  /* Makes no sense to continue. */
+	}
+
+	LIST_FOREACH(p, &spawn->jobs) {
+		job = LIST_ENTRY(p, struct job, list);
+
+		if (JOB_TYPE_JOIN == job->type)
+			((struct job_join *)job)->acked = 1;
 	}
 
 	return 0;

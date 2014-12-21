@@ -33,7 +33,7 @@ struct job
 
 			/* Make progress. If the job is completed the
 			 * last argument is set to 1 and zero otherwise. */
-	int		(*work)(struct job *self, struct spawn *spawn, 
+	int		(*work)(struct job *self, struct spawn *spawn,
 			        int *completed);
 };
 
@@ -52,6 +52,9 @@ struct job_join
 	struct job	job;
 
 	int		father;
+
+	int		acked;	/* Set to one if a RESPONSE_JOIN has been
+			         * received. */
 };
 
 /*

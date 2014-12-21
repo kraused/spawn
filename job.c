@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 
+#include <unistd.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -30,7 +31,6 @@ static int _job_join_dtor(struct job_join *self);
 static int _free_job_join(struct alloc *alloc, struct job_join **self);
 static int _join_work(struct job *job, struct spawn *spawn, int *completed);
 static int _join_send_request(struct spawn *spawn, int father);
-static int _join_recv_response(struct spawn *spawn, int father);
 static int _sockaddr(int fd, ui32 *ip, ui32 *portnum);
 
 
@@ -129,7 +129,6 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 
 	*completed = 0;
 
-#if 0
 /* ************************************************************ */
 	char argv1[32];
 	char argv2[32];
@@ -171,9 +170,8 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 			die();
 	}
 /* ************************************************************ */
-	
+
 	*completed = 1;
-#endif
 
 	return 0;
 }
@@ -185,6 +183,7 @@ static int _job_join_ctor(struct job_join *self, struct alloc *alloc, int father
 	self->job.work  = _join_work;
 
 	self->father    = father;
+	self->acked     = 0;
 
 	list_ctor(&self->job.list);
 
@@ -227,19 +226,10 @@ static int _join_work(struct job *job, struct spawn *spawn, int *completed)
 		return err;
 	}
 
-	err = _join_recv_response(spawn, self->father);
-	if (unlikely(err)) {
-		fcallerror("_join_recv_request", err);
-		return err;
+	if (1 == self->acked) {
+		log("Succesfully joined the network.");
+		*completed = 1;
 	}
-
-	*completed = 1;
-
-	return -ENOTIMPL;
-}
-
-static int _join(struct spawn *spawn, int father)
-{
 
 	return 0;
 }
@@ -271,87 +261,6 @@ static int _join_send_request(struct spawn *spawn, int father)
 		fcallerror("spawn_send_message", err);
 		return err;
 	}
-
-	return 0;
-}
-
-static int _join_recv_response(struct spawn *spawn, int father)
-{
-	int err;
-	struct buffer *buffer;
-	struct message_header header;
-	struct message_response_join msg;
-
-	/* FIXME This is NOT the way to implement this. Let the main
-	 *       loop handle the receiving and just test in here whether
-	 *	 a reply arrived.
-	 */
-
-#if 0
-	while (1) {
-		err = cond_var_lock_acquire(&spawn->comm.cond);
-		if (unlikely(err)) {
-			fcallerror("cond_var_lock_acquire", err);
-			die();
-		}
-
-		while (!_work_available(spawn)) {
-			err = cond_var_wait(&spawn->comm.cond);
-			if (unlikely(err)) {
-				fcallerror("cond_var_wait", err);
-				die();
-			}
-		}
-
-		err = comm_dequeue(&spawn->comm, &buffer);
-		if (-ENOENT == err) {
-			error("comm_dequeue() returned -ENOENT.");
-			goto unlock;
-		}
-		if (unlikely(err))
-			die();
-
-unlock:
-		err = cond_var_lock_release(&spawn->comm.cond);
-		if (unlikely(err)) {
-			fcallerror("cond_var_lock_release", err);
-			die();
-		}
-
-		err = unpack_message_header(buffer, &header);
-		if (unlikely(err)) {
-			fcallerror("unpack_message_header", err);
-			goto push;
-		}
-
-		if (unlikely(MESSAGE_TYPE_RESPONSE_JOIN != header.type)) {
-			error("Received unexpected message of type %d.", header.type);
-			goto push;	/* Drop message and just continue.
-					 */
-		}
-
-		err = unpack_message_payload(buffer, &header, spawn->alloc, (void *)&msg);
-		if (unlikely(err)) {
-			fcallerror("unpack_message_payload", err);
-			goto push;
-		}
-
-		break;
-
-push:
-		err = buffer_pool_push(&spawn->bufpool, buffer);
-		if (unlikely(err))
-			fcallerror("buffer_pool_push", err);
-	}
-
-	if (unlikely(msg.addr != spawn->tree.here)) {
-		error("MESSAGE_TYPE_RESPONSE_JOIN message contains incorrect address %d.", (int )msg.addr);
-		die();	/* Makes no sense to continue.
-			 */
-	}
-
-	log("Succesfully joined the network.");
-#endif
 
 	return 0;
 }
