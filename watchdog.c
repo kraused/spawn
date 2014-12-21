@@ -8,6 +8,7 @@
 #include "compiler.h"
 #include "error.h"
 #include "ints.h"
+#include "helper.h"
 #include "thread.h"
 #include "atomic.h"
 #include "watchdog.h"
