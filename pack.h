@@ -86,6 +86,11 @@ int buffer_write(struct buffer *self, int fd);
 int buffer_read(struct buffer *self, int fd);
 
 /*
+ * Copy content from other to self.
+ */
+int buffer_copy(struct buffer *self, struct buffer* other);
+
+/*
  * Pack and unpack values. Note that the number of elements is not stored in the buffer. If
  * necessary it should be explicitly written to the buffer prior to writing the actual data.
  *

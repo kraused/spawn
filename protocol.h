@@ -21,7 +21,8 @@ struct buffer;
 enum
 {
 	MESSAGE_TYPE_REQUEST_JOIN	= 1001,
-	MESSAGE_TYPE_RESPONSE_JOIN
+	MESSAGE_TYPE_RESPONSE_JOIN,
+	MESSAGE_TYPE_PING
 };
 
 /*
@@ -71,6 +72,11 @@ struct message_response_join
 {
 	ui32	addr;	/* Already given to process on command line. Given again for
 			 * double checking. */
+};
+
+struct message_ping
+{
+	ui64	now;
 };
 
 /*

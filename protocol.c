@@ -22,6 +22,10 @@ static int _pack_message_response_join(struct buffer *buffer,
                                        const struct message_response_join *msg);
 static int _unpack_message_response_join(struct buffer *buffer,
                                          struct message_response_join *msg);
+static int _pack_message_ping(struct buffer *buffer,
+                              const struct message_ping *msg);
+static int _unpack_message_ping(struct buffer *buffer,
+                                struct message_ping *msg);
 
 
 int pack_message_header(struct buffer *buffer,
@@ -164,6 +168,10 @@ static int _pack_message_something(struct buffer *buffer, int type, void *msg)
 		err = _pack_message_response_join(buffer,
 		                    (const struct message_response_join *)msg);
 		break;
+	case MESSAGE_TYPE_PING:
+		err = _pack_message_ping(buffer,
+		                    (const struct message_ping *)msg);
+		break;
 	default:
 		error("Unknown message type %d.", type);
 		err = -ESOMEFAULT;
@@ -189,6 +197,10 @@ static int _alloc_message_something(struct alloc *alloc, int type, void **msg)
 	case MESSAGE_TYPE_RESPONSE_JOIN:
 		err = ZALLOC(alloc, msg, 1, sizeof(struct message_response_join),
 		             "struct message_response_join");
+		break;
+	case MESSAGE_TYPE_PING:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_ping),
+		             "struct message_ping");
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -217,6 +229,10 @@ static int _unpack_message_something(struct buffer *buffer, int type, void *msg)
 	case MESSAGE_TYPE_RESPONSE_JOIN:
 		err = _unpack_message_response_join(buffer,
 		                    (struct message_response_join *)msg);
+		break;
+	case MESSAGE_TYPE_PING:
+		err = _unpack_message_ping(buffer,
+		                    (struct message_ping *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -283,6 +299,30 @@ static int _unpack_message_response_join(struct buffer *buffer,
 	int err;
 
 	err = buffer_unpack_ui32(buffer, &msg->addr, 1);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _pack_message_ping(struct buffer *buffer,
+                              const struct message_ping *msg)
+{
+	int err;
+
+	err = buffer_pack_ui64(buffer, &msg->now, 1);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _unpack_message_ping(struct buffer *buffer,
+                                struct message_ping *msg)
+{
+	int err;
+
+	err = buffer_unpack_ui64(buffer, &msg->now, 1);
 	if (unlikely(err))
 		return err;
 

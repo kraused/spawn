@@ -54,6 +54,8 @@ int calm_the_watchdog()
 	ll t = llnow();
 	atomic_write(_watchdog.last, t);
 
+	log("Watchdog backs off for now.");
+
 	return 0;
 }
 

@@ -21,17 +21,20 @@
 #include "helper.h"
 #include "protocol.h"
 #include "job.h"
+#include "watchdog.h"
 
 #include "devel.h"
 
 static int _work_available(struct spawn *spawn);
 static int _ping(struct spawn *spawn, int timeout);
+static int _send_ping(struct spawn *spawn, ll now);
 static int _handle_accept(struct spawn *spawn, int newfd);
 static int _handle_message(struct spawn *spawn, struct buffer *buffer);
 static int _handle_jobs(struct spawn *spawn);
 static int _handle_request_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _send_response_join(struct spawn *spawn, int dest);
+static int _handle_ping(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _peeraddr(int fd, ui32 *ip, ui32 *portnum);
 
 
@@ -126,6 +129,10 @@ static int _ping(struct spawn *spawn, int timeout)
 {
 	static ll last = -1;
 	ll now;
+	int err;
+
+	if (0 != spawn->tree.here)
+		return 0;
 
 	now = llnow();
 
@@ -135,9 +142,38 @@ static int _ping(struct spawn *spawn, int timeout)
 	}
 
 	if ((now - last) > timeout/2) {
-		/* FIXME Send ping broadcast message. */
+		err = _send_ping(spawn, now);
+		if (unlikely(err))
+			fcallerror("_send_ping", err);
 
+		last = now;
 		return 0;
+	}
+
+	return -ESOMEFAULT;
+}
+
+static int _send_ping(struct spawn *spawn, ll now)
+{
+	int err;
+	struct message_header   header;
+	struct message_ping 	msg;
+
+	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
+
+	header.src   = spawn->tree.here;	/* Always the same */
+	header.flags = MESSAGE_FLAG_BCAST;
+	header.type  = MESSAGE_TYPE_PING;
+
+	msg.now = now;
+
+	log("Sending ping message.");
+
+	err = spawn_send_message(spawn, &header, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("spawn_send_message", err);
+		return err;
 	}
 
 	return 0;
@@ -216,6 +252,9 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 		break;
 	case MESSAGE_TYPE_RESPONSE_JOIN:
 		_handle_response_join(spawn, &header, buffer);
+		break;
+	case MESSAGE_TYPE_PING:
+		_handle_ping(spawn, &header, buffer);
 		break;
 	default:
 		error("Dropping unexpected message of type %d from %d.", header.type, header.src);
@@ -386,6 +425,11 @@ static int _send_response_join(struct spawn *spawn, int dest)
 	}
 
 	return 0;
+}
+
+static int _handle_ping(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	return calm_the_watchdog();
 }
 
 static int _peeraddr(int fd, ui32 *ip, ui32 *portnum)

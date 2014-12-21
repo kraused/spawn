@@ -129,6 +129,7 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 
 	*completed = 0;
 
+	if (0 == spawn->tree.here) {
 /* ************************************************************ */
 	char argv1[32];
 	char argv2[32];
@@ -155,7 +156,6 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 
 	for (i = 0, j = 1; i < spawn->nhosts; i += n, ++j) {
 		/* FIXME Threaded spawning! Take devel_fanout into account. */
-		/* At the same time, while spawning we need to accept connections! */
 
 		snprintf(argv3, sizeof(argv3), "%d", 0);		/* my participant id */
 		snprintf(argv4, sizeof(argv4), "%d", spawn->nhosts);	/* size */
@@ -170,6 +170,7 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 			die();
 	}
 /* ************************************************************ */
+	}
 
 	*completed = 1;
 
