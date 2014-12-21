@@ -63,12 +63,16 @@ int spawn_ctor(struct spawn *self, struct alloc *alloc)
 		return err;
 	}
 
+	list_ctor(&self->jobs);
+
 	return 0;
 }
 
 int spawn_dtor(struct spawn *self)
 {
 	int err;
+
+	/* FIXME Check that list of jobs is empty */
 
 	err = comm_dtor(&self->comm);
 	if (unlikely(err)) {

@@ -7,13 +7,13 @@
 #include "comm.h"
 #include "network.h"
 #include "pack.h"
+#include "list.h"
 
 struct sockaddr;
 
 struct alloc;
 struct message_header;
 struct exec_plugin;
-
 
 /*
  * Record of a process on a (potentially remote) host.
@@ -52,7 +52,12 @@ struct spawn
 	int			nprocs;
 	struct process		*procs;
 
+	struct list		jobs;
+
 	struct exec_plugin	*exec;
+
+	/* FIXME List of threads
+	 */
 };
 
 /*
