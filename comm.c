@@ -51,6 +51,8 @@ static int _comm_writes(struct comm *self);
 static int _comm_pull_recvb(struct comm *self, int i);
 static int _comm_resize_recvb(struct comm *self, int i);
 static int _secretly_copy_header(struct buffer *buffer, struct message_header *header);
+static int _copy_buffer(struct buffer_pool *bufpool,
+                        struct buffer *buffer, struct buffer **copy);
 
 
 int comm_ctor(struct comm *self, struct alloc *alloc,
@@ -704,8 +706,14 @@ static int _comm_fill_sendb(struct comm *self)
 		}
 
 		if (MESSAGE_FLAG_BCAST & header.flags) {
-			for (i = 0; i < self->npollfds - 1; ++i)
-				self->sendb[i] = buffer;
+			self->sendb[0] = buffer;
+			for (i = 1; i < self->npollfds - 1; ++i) {
+				err = _copy_buffer(self->bufpool, buffer, &self->sendb[i]);
+				if (unlikely(err)) {
+					fcallerror("_copy_buffer", err);
+					die();	/* FIXME? */
+				}
+			}
 		} else {
 			self->sendb[self->net->lft[header.dst]] = buffer;
 		}
@@ -979,5 +987,31 @@ static int _secretly_copy_header(struct buffer *buffer, struct message_header *h
 	}
 
 	return 0;
+}
+
+static int _copy_buffer(struct buffer_pool *bufpool, struct buffer *buffer, struct buffer **copy)
+{
+	int err, tmp;
+
+	err = buffer_pool_pull(bufpool, copy);
+	if (unlikely(err)) {
+		fcallerror("buffer_pool_pull", err);
+		return err;
+	}
+
+	err = buffer_copy(*copy, buffer);
+	if (unlikely(err)) {
+		fcallerror("buffer_copy", err);
+		goto fail;
+	}
+
+	return 0;
+
+fail:
+	tmp = buffer_pool_push(bufpool, *copy);
+	if (unlikely(tmp))
+		fcallerror("buffer_pool_push", tmp);
+
+	return err;
 }
 

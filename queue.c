@@ -28,6 +28,7 @@ int queue_ctor(struct queue *self, struct alloc *alloc, ll capacity)
 	self->capacity = capacity;
 	self->head     = 0;
 	self->tail     = 0;
+	self->size     = 0;
 
 	return 0;
 }
@@ -91,9 +92,9 @@ int queue_enqueue(struct queue *self, void *p)
 	if (unlikely(self->capacity == self->size))
 		return -ENOMEM;
 
-	self->buf[self->tail] = p;
+	self->buf[self->tail % self->capacity] = p;
 
-	self->tail = (self->tail + 1) % self->capacity;
+	self->tail += 1;
 	self->size += 1;
 
 	return 0;
@@ -104,9 +105,9 @@ int queue_dequeue(struct queue *self, void **p)
 	if (unlikely(0 == self->size))
 		return -ENOENT;
 
-	*p = self->buf[self->head];
+	*p = self->buf[self->head % self->capacity];
 
-	self->head  = (self->head + 1) % self->capacity;
+	self->head += 1;
 	self->size -= 1;
 
 	return 0;
@@ -117,7 +118,7 @@ int queue_peek(struct queue *self, void **p)
 	if (unlikely(0 == self->size))
 		return -ENOENT;
 
-	*p = self->buf[self->head];
+	*p = self->buf[self->head % self->capacity];
 
 	return 0;
 }

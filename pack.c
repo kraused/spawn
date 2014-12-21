@@ -146,6 +146,29 @@ int buffer_read(struct buffer *self, int fd)
 	return 0;
 }
 
+int buffer_copy(struct buffer *self, struct buffer* other)
+{
+	int err;
+
+	err = buffer_clear(self);
+	if (unlikely(err)) {
+		fcallerror("buffer_clear", err);
+		return err;
+	}
+
+	err = buffer_resize(self, other->size);
+	if (unlikely(err)) {
+		fcallerror("buffer_resize", err);
+		return err;
+	}
+
+	memcpy(self->buf, other->buf, other->size);
+	self->size = other->size;
+	self->pos  = other->pos;
+
+	return 0;
+}
+
 /* TODO Better strategies than just doubling the sizes exist.
  */
 #define DEFINE_PACK_UNPACK_FUNCTIONS(T)					\
