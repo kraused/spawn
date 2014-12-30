@@ -146,12 +146,16 @@ int comm_stop_processing(struct comm *self)
 {
 	atomic_write(self->stop, 1);
 
+	log("Stopping communication thread.");
+
 	return 0;
 }
 
 int comm_resume_processing(struct comm *self)
 {
 	atomic_write(self->stop, 0);
+
+	log("Resuming communication thread.");
 
 	return 0;
 }
@@ -673,6 +677,29 @@ static int _comm_fill_sendb(struct comm *self)
 			if (n != self->npollfds)
 				break;
 		} else {
+			/* Route local message directly to the receive queue.
+			 */
+			if (self->net->here == header.dst) {
+				err = _comm_queue_dequeue(&self->sendq, (void *)&buffer);
+				if (unlikely(err))
+					return err;
+
+				err = buffer_seek(buffer, 0);
+				if (unlikely(err)) {
+					fcallerror("buffer_seek", err);
+					die();	/* Pretty much impossible anyway
+						 * so why bother?
+						 */
+				}
+				err = _comm_queue_enqueue(&self->recvq, buffer);
+				if (unlikely(err))
+					fcallerror("_comm_queue_enqueue", err);
+					/* Will cause a memory leak that we just
+					 * have to live with. */
+
+				continue;
+			}
+
 			if (unlikely((header.dst < 0) ||
 			             (header.dst >= self->net->size) ||
 			             (-1 == self->net->lft[header.dst]))) {
