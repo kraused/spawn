@@ -113,7 +113,10 @@ int spawn_setup_on_local(struct spawn *self, int nhosts,
 	if (unlikely(err))
 		goto fail1;
 
-	err = _setup_tree(&self->tree, self->alloc, nhosts, 0);
+	/* Since the master process needs to be part of the network we need
+	 * to increment the number of hosts.
+	 */
+	err = _setup_tree(&self->tree, self->alloc, nhosts + 1, 0);
 	if (unlikely(err))
 		goto fail2;
 
@@ -136,7 +139,7 @@ int spawn_setup_on_other(struct spawn *self, int nhosts, int here)
 {
 	int err;
 
-	err = _setup_tree(&self->tree, self->alloc, nhosts, here);
+	err = _setup_tree(&self->tree, self->alloc, nhosts + 1, here);
 	if (unlikely(err))
 		return err;
 
@@ -315,8 +318,10 @@ static int _setup_tree(struct network *self, struct alloc *alloc,
 		return -EINVAL;
 
 	err = network_resize(self, size);
-	if (unlikely(err))
+	if (unlikely(err)) {
+		fcallerror("network_resize", err);
 		return err;
+	}
 
 	self->here = here;
 
