@@ -13,19 +13,34 @@
 
 static int _pack_message_something(struct buffer *buffer, int type, void *msg);
 static int _alloc_message_something(struct alloc *alloc, int type, void **msg);
-static int _unpack_message_something(struct buffer *buffer, int type, void *msg);
+static int _unpack_message_something(struct buffer *buffer, struct alloc *alloc,
+                                     int type, void *msg);
+static int _free_message_something(struct alloc *alloc, int type, void *msg);
 static int _pack_message_request_join(struct buffer *buffer,
                                       const struct message_request_join *msg);
 static int _unpack_message_request_join(struct buffer *buffer,
                                         struct message_request_join *msg);
+static int _free_message_request_join(struct alloc *alloc,
+                                      const struct message_request_join *msg);
 static int _pack_message_response_join(struct buffer *buffer,
                                        const struct message_response_join *msg);
 static int _unpack_message_response_join(struct buffer *buffer,
                                          struct message_response_join *msg);
+static int _free_message_response_join(struct alloc *alloc,
+                                       const struct message_response_join *msg);
 static int _pack_message_ping(struct buffer *buffer,
                               const struct message_ping *msg);
 static int _unpack_message_ping(struct buffer *buffer,
                                 struct message_ping *msg);
+static int _free_message_ping(struct alloc *alloc,
+                              const struct message_ping *msg);
+static int _pack_message_exec(struct buffer *buffer,
+                              const struct message_exec *msg);
+static int _unpack_message_exec(struct buffer *buffer,
+                                struct alloc *alloc,
+                                struct message_exec *msg);
+static int _free_message_exec(struct alloc *alloc,
+                              const struct message_exec *msg);
 
 
 int pack_message_header(struct buffer *buffer,
@@ -94,7 +109,19 @@ int unpack_message_payload(struct buffer *buffer,
 {
 	int err;
 
-	err = _unpack_message_something(buffer, header->type, msg);
+	err = _unpack_message_something(buffer, alloc, header->type, msg);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+int free_message_payload(const struct message_header *header,
+                         struct alloc *alloc, void *msg)
+{
+	int err;
+
+	err = _free_message_something(alloc, header->type, msg);
 	if (unlikely(err))
 		return err;
 
@@ -145,7 +172,7 @@ int unpack_message(struct buffer *buffer, struct message_header *header,
 	if (unlikely(err))
 		return err;
 
-	err = _unpack_message_something(buffer, header->type, *msg);
+	err = _unpack_message_something(buffer, alloc, header->type, *msg);
 	if (unlikely(err))
 		return err;
 
@@ -171,6 +198,10 @@ static int _pack_message_something(struct buffer *buffer, int type, void *msg)
 	case MESSAGE_TYPE_PING:
 		err = _pack_message_ping(buffer,
 		                    (const struct message_ping *)msg);
+		break;
+	case MESSAGE_TYPE_EXEC:
+		err = _pack_message_exec(buffer,
+		                    (const struct message_exec *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -202,6 +233,10 @@ static int _alloc_message_something(struct alloc *alloc, int type, void **msg)
 		err = ZALLOC(alloc, msg, 1, sizeof(struct message_ping),
 		             "struct message_ping");
 		break;
+	case MESSAGE_TYPE_EXEC:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_exec),
+		             "struct message_exec");
+		break;
 	default:
 		error("Unknown message type %d.", type);
 		err = -ESOMEFAULT;
@@ -215,7 +250,8 @@ static int _alloc_message_something(struct alloc *alloc, int type, void **msg)
 	return 0;
 }
 
-static int _unpack_message_something(struct buffer *buffer, int type, void *msg)
+static int _unpack_message_something(struct buffer *buffer, struct alloc *alloc,
+                                     int type, void *msg)
 {
 	int err;
 
@@ -233,6 +269,44 @@ static int _unpack_message_something(struct buffer *buffer, int type, void *msg)
 	case MESSAGE_TYPE_PING:
 		err = _unpack_message_ping(buffer,
 		                    (struct message_ping *)msg);
+		break;
+	case MESSAGE_TYPE_EXEC:
+		err = _unpack_message_exec(buffer, alloc,
+		                    (struct message_exec *)msg);
+		break;
+	default:
+		error("Unknown message type %d.", type);
+		err = -ESOMEFAULT;
+	}
+
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _free_message_something(struct alloc *alloc, int type, void *msg)
+{
+	int err;
+
+	err = -ESOMEFAULT;
+
+	switch (type) {
+	case MESSAGE_TYPE_REQUEST_JOIN:
+		err = _free_message_request_join(alloc,
+		                    (struct message_request_join *)msg);
+		break;
+	case MESSAGE_TYPE_RESPONSE_JOIN:
+		err = _free_message_response_join(alloc,
+		                    (struct message_response_join *)msg);
+		break;
+	case MESSAGE_TYPE_PING:
+		err = _free_message_ping(alloc,
+		                    (struct message_ping *)msg);
+		break;
+	case MESSAGE_TYPE_EXEC:
+		err = _free_message_exec(alloc,
+		                    (struct message_exec *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -281,6 +355,12 @@ static int _unpack_message_request_join(struct buffer *buffer,
 	return 0;
 }
 
+static int _free_message_request_join(struct alloc *alloc,
+                                      const struct message_request_join *msg)
+{
+	return 0;
+}
+
 static int _pack_message_response_join(struct buffer *buffer,
                                        const struct message_response_join *msg)
 {
@@ -305,6 +385,12 @@ static int _unpack_message_response_join(struct buffer *buffer,
 	return 0;
 }
 
+static int _free_message_response_join(struct alloc *alloc,
+                                       const struct message_response_join *msg)
+{
+	return 0;
+}
+
 static int _pack_message_ping(struct buffer *buffer,
                               const struct message_ping *msg)
 {
@@ -325,6 +411,153 @@ static int _unpack_message_ping(struct buffer *buffer,
 	err = buffer_unpack_ui64(buffer, &msg->now, 1);
 	if (unlikely(err))
 		return err;
+
+	return 0;
+}
+
+static int _free_message_ping(struct alloc *alloc,
+                              const struct message_ping *msg)
+{
+	return 0;
+}
+
+static int _pack_message_exec(struct buffer *buffer,
+                              const struct message_exec *msg)
+{
+	int err;
+	int i;
+	ui32 argc, n, hostlen;
+
+	hostlen = strlen(msg->host);
+
+	err = buffer_pack_ui32(buffer, &hostlen, 1);
+	if (unlikely(err))
+		return err;
+
+	n = 0;
+	for (argc = 0; msg->argv[argc]; ++argc)
+		n += (strlen(msg->argv[argc]) + 1);
+
+	err = buffer_pack_ui32(buffer, &argc, 1);
+	if (unlikely(err))
+		return err;
+
+	err = buffer_pack_ui32(buffer, &n, 1);
+	if (unlikely(err))
+		return err;
+
+	err = buffer_pack_si8(buffer, (si8 *)msg->host, hostlen + 1);
+	if (unlikely(err))
+		return err;
+
+	for (i = 0; msg->argv[i]; ++i) {
+		err = buffer_pack_si8(buffer, (si8* )msg->argv[i],
+		                      strlen(msg->argv[i]) + 1);
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
+static int _unpack_message_exec(struct buffer *buffer,
+                                struct alloc *alloc,
+                                struct message_exec *msg)
+{
+	int err, tmp;
+	int i;
+	char **p;
+
+	err = buffer_unpack_ui32(buffer, &msg->_hostlen, 1);
+	if (unlikely(err))
+		return err;
+
+	err = buffer_unpack_ui32(buffer, &msg->_argc, 1);
+	if (unlikely(err))
+		return err;
+
+	err = buffer_unpack_ui32(buffer, &msg->_sz, 1);
+	if (unlikely(err))
+		return err;
+
+	err = ZALLOC(alloc, (void **)&msg->host, (msg->_hostlen + 1),
+	             sizeof(char*), "host");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		return err;
+	}
+
+	err = ZALLOC(alloc, (void **)&p, (msg->_argc + 1),
+	             sizeof(char*), "argv");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		goto fail1;
+	}
+
+	err = ZALLOC(alloc, (void **)&p[0], msg->_sz,
+	             sizeof(char), "argv[0]");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		goto fail2;
+	}
+
+	err = buffer_unpack_si8(buffer, (si8* )msg->host, msg->_hostlen + 1);
+	if (unlikely(err))
+		goto fail3;
+
+	err = buffer_unpack_si8(buffer, (si8* )p[0], msg->_sz);
+	if (unlikely(err))
+		goto fail3;
+
+	for (i = 1; i < (int )msg->_argc; ++i) {
+		p[i] = p[i-1] + (strlen(p[i-1]) + 1);
+	}
+	p[msg->_argc] = NULL;
+
+	msg->argv = p;
+
+	return 0;
+
+fail3:
+	tmp = ZFREE(alloc, (void **)&p[0], msg->_sz, sizeof(char), "");
+	if (unlikely(tmp))
+		fcallerror("ZFREE", tmp);
+
+fail2:
+	tmp = ZFREE(alloc, (void **)&p, msg->_argc, sizeof(char*), "");
+	if (unlikely(tmp))
+		fcallerror("ZFREE", tmp);
+
+fail1:
+	tmp = ZFREE(alloc, (void **)&msg->host, msg->_hostlen + 1, sizeof(char), "");
+	if (unlikely(tmp))
+		fcallerror("ZFREE", tmp);
+
+	return err;
+}
+
+static int _free_message_exec(struct alloc *alloc,
+                              const struct message_exec *msg)
+{
+	int err;
+
+	err = ZFREE(alloc, (void **)&msg->argv[0], msg->_sz, sizeof(char), "");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
+		return err;
+	}
+
+	err = ZFREE(alloc, (void **)&msg->argv, msg->_argc, sizeof(char*), "");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
+		return err;
+	}
+
+	err = ZFREE(alloc, (void **)&msg->host, msg->_hostlen + 1, sizeof(char), "");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
+		return err;
+	}
 
 	return 0;
 }

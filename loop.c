@@ -22,6 +22,7 @@
 #include "protocol.h"
 #include "job.h"
 #include "watchdog.h"
+#include "plugin.h"
 
 #include "devel.h"
 
@@ -35,6 +36,9 @@ static int _handle_request_join(struct spawn *spawn, struct message_header *head
 static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _send_response_join(struct spawn *spawn, int dest);
 static int _handle_ping(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_exec(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum);
+static int _fix_lft(struct spawn *spawn, int port, int dest);
 static int _peeraddr(int fd, ui32 *ip, ui32 *portnum);
 
 
@@ -194,12 +198,6 @@ static int _handle_accept(struct spawn *spawn, int newfd)
 		die();
 	}
 
-	err = cond_var_lock_release(&spawn->comm.cond);
-	if (unlikely(err)) {
-		fcallerror("cond_var_lock_release", err);
-		die();
-	}
-
 	/* Temporarily disable the communication thread. Otherwise it
 	 * happens that we have to wait for seconds before acquiring the
 	 * lock.
@@ -256,6 +254,9 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 	case MESSAGE_TYPE_PING:
 		_handle_ping(spawn, &header, buffer);
 		break;
+	case MESSAGE_TYPE_EXEC:
+		_handle_exec(spawn, &header, buffer);
+		break;
 	default:
 		error("Dropping unexpected message of type %d from %d.", header.type, header.src);
 	}
@@ -283,6 +284,8 @@ static int _handle_jobs(struct spawn *spawn)
 			continue;
 		}
 
+		completed = 0;
+
 		err = job->work(job, spawn, &completed);
 		if (unlikely(err))
 			fcallerror("job->work", err);
@@ -300,11 +303,12 @@ static int _handle_jobs(struct spawn *spawn)
 
 static int _handle_request_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
 {
-	int i;
-	int err, dest;
-	ui32 ip, portnum;
+	int err, tmp;
 	struct message_request_join msg;
-	int found;
+	int port, dest;
+	struct list *p;
+	struct job *job;
+	int matches;
 
 	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {
@@ -312,74 +316,67 @@ static int _handle_request_join(struct spawn *spawn, struct message_header *head
 		die();	/* FIXME ?*/
 	}
 
-	found = -1;
-
-	for (i = 0; i < spawn->tree.nports; ++i) {
-		err = _peeraddr(spawn->tree.ports[i], &ip, &portnum);
-		if (unlikely(err))
-			continue;
-
-		if ((ip == msg.ip) && (portnum == msg.portnum)) {
-			found = i;
-			break;
-		}
-	}
-
-	if (unlikely(found < 0)) {
+	dest = header->src;
+	port = _find_peerport(spawn, msg.ip, msg.portnum);
+	if (unlikely(port < 0)) {
 		error("Failed to match address with port number.");
 		die();
 	}
 
-	log("Routing messages to %d via port %d.", (int )header->src, found);
+	log("Routing messages to %d via port %d.", dest, port);
 
-	dest = header->src;
-
-	/* Temporarily disable the communication thread. Otherwise it
-	 * happen that we wait for seconds before acquiring the lock.
-	 */
-	err = comm_stop_processing(&spawn->comm);
+	err = _fix_lft(spawn, port, dest);
 	if (unlikely(err)) {
-		error("Failed to temporarily stop the communication thread.");
-	}
-
-	err = network_lock_acquire(&spawn->tree);
-	if (unlikely(err))
-		die();
-
-	/* FIXME This is a tree. We know that header->src is responsible for a
-	 *       full range of ports so we can fix the lft here for multiple ports.
-	 */
-
-	err = network_modify_lft(&spawn->tree, found, &dest, 1);
-	if (unlikely(err))
-		die();
-
-	err = network_lock_release(&spawn->tree);
-	if (unlikely(err))
-		die();
-
-	err = comm_resume_processing(&spawn->comm);
-	if (unlikely(err)) {
-		error("Failed to resume the communication thread.");
-		die();	/* Pretty much impossible that this happen. If it does
-			 * we are screwed though. */
+		fcallerror("_fixup_lft", err);
+		goto fail;
 	}
 
 	err = _send_response_join(spawn, dest);
 	if (unlikely(err)) {
 		fcallerror("_send_response_join", err);
+		goto fail;
+	}
+
+	matches = 0;
+
+	LIST_FOREACH(p, &spawn->jobs) {
+		job = LIST_ENTRY(p, struct job, list);
+
+		if (JOB_TYPE_BUILD_TREE == job->type) {
+			((struct job_build_tree *)job)->children += 1;
+			++matches;
+		}
+	}
+
+	if (1 != matches) {
+		error("Found %d jobs of type JOB_TYPE_JOIN instead of just one.", matches);
+		err = -ESOMEFAULT;
+		goto fail;
+	}
+
+	err = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("free_message_payload", err);
 		return err;
 	}
 
 	return 0;
+
+fail:
+	tmp = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(tmp))
+		fcallerror("free_message_payload", tmp);
+
+	return err;
 }
 
 static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
 {
-	int err;
+	int err, tmp;
 	struct list *p;
 	struct job *job;
 	struct message_response_join msg;
+	int matches;
 
 	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {
@@ -392,14 +389,37 @@ static int _handle_response_join(struct spawn *spawn, struct message_header *hea
 		die();  /* Makes no sense to continue. */
 	}
 
+	matches = 0;
+
 	LIST_FOREACH(p, &spawn->jobs) {
 		job = LIST_ENTRY(p, struct job, list);
 
-		if (JOB_TYPE_JOIN == job->type)
+		if (JOB_TYPE_JOIN == job->type) {
 			((struct job_join *)job)->acked = 1;
+			++matches;
+		}
+	}
+
+	if (1 != matches) {
+		error("Found %d jobs of type JOB_TYPE_JOIN instead of just one.", matches);
+		err = -ESOMEFAULT;
+		goto fail;
+	}
+
+	err = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("free_message_payload", err);
+		return err;
 	}
 
 	return 0;
+
+fail:
+	tmp = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(tmp))
+		fcallerror("free_message_payload", tmp);
+
+	return err;
 }
 
 static int _send_response_join(struct spawn *spawn, int dest)
@@ -431,6 +451,101 @@ static int _handle_ping(struct spawn *spawn, struct message_header *header, stru
 {
 	return calm_the_watchdog();
 }
+
+static int _handle_exec(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	int err, tmp;
+	struct message_exec msg;
+
+	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		die();	/* FIXME ?*/
+	}
+
+	err = spawn->exec->ops->exec(spawn->exec, msg.host, msg.argv);
+	if (unlikely(err)) {
+		error("Spawn plugin exec function failed with error %d.", err);
+		goto fail;
+	}
+
+	err = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("free_message_payload", err);
+		return err;
+	}
+
+	return 0;
+
+fail:
+	tmp = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(tmp))
+		fcallerror("free_message_payload", tmp);
+
+	return err;
+}
+
+static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum)
+{
+	int i;
+	int found;
+	int err;
+	ui32 addr, port;
+
+	found = -1;
+
+	for (i = 0; i < spawn->tree.nports; ++i) {
+		err = _peeraddr(spawn->tree.ports[i], &addr, &port);
+		if (unlikely(err))
+			continue;
+
+		if ((ip == addr) && (portnum == port)) {
+			found = i;
+			break;
+		}
+	}
+
+	return found;
+}
+
+static int _fix_lft(struct spawn *spawn, int port, int dest)
+{
+	int err;
+
+	/* Temporarily disable the communication thread. Otherwise it
+	 * happen that we wait for seconds before acquiring the lock.
+	 */
+	err = comm_stop_processing(&spawn->comm);
+	if (unlikely(err)) {
+		error("Failed to temporarily stop the communication thread.");
+	}
+
+	err = network_lock_acquire(&spawn->tree);
+	if (unlikely(err))
+		die();
+
+	/* FIXME This is a tree. We know that header->src is responsible for a
+	 *       full range of ports so we can fix the lft here for multiple ports.
+	 */
+
+	err = network_modify_lft(&spawn->tree, port, &dest, 1);
+	if (unlikely(err))
+		die();
+
+	err = network_lock_release(&spawn->tree);
+	if (unlikely(err))
+		die();
+
+	err = comm_resume_processing(&spawn->comm);
+	if (unlikely(err)) {
+		error("Failed to resume the communication thread.");
+		die();	/* Pretty much impossible that this happen. If it does
+			 * we are screwed though. */
+	}
+
+	return 0;
+}
+
 
 static int _peeraddr(int fd, ui32 *ip, ui32 *portnum)
 {

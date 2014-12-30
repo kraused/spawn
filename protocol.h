@@ -22,7 +22,8 @@ enum
 {
 	MESSAGE_TYPE_REQUEST_JOIN	= 1001,
 	MESSAGE_TYPE_RESPONSE_JOIN,
-	MESSAGE_TYPE_PING
+	MESSAGE_TYPE_PING,
+	MESSAGE_TYPE_EXEC
 };
 
 /*
@@ -79,6 +80,17 @@ struct message_ping
 	ui64	now;
 };
 
+struct message_exec
+{
+	const char	*host;
+	char *const	*argv;
+
+	/* For internal bookkeeping */
+	ui32		_hostlen;
+	ui32		_argc;
+	ui32		_sz;
+};
+
 /*
  * Pack a message header into the buffer.
  */
@@ -106,6 +118,12 @@ int pack_message_payload(struct buffer *buffer,
 int unpack_message_payload(struct buffer *buffer,
                            const struct message_header *header,
                            struct alloc *alloc, void *msg);
+
+/*
+ * Free a message payload
+ */
+int free_message_payload(const struct message_header *header,
+                         struct alloc *alloc, void *msg);
 
 /*
  * Pack a message.
