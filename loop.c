@@ -37,9 +37,13 @@ static int _handle_response_join(struct spawn *spawn, struct message_header *hea
 static int _send_response_join(struct spawn *spawn, int dest);
 static int _handle_ping(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_exec(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_request_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_response_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum);
 static int _fix_lft(struct spawn *spawn, int port, int dest);
 static int _peeraddr(int fd, ui32 *ip, ui32 *portnum);
+static int _declare_child_alive(struct job_build_tree *job, int id);
+static int _declare_child_ready(struct job_build_tree *job, int id);
 
 
 int loop(struct spawn *spawn)
@@ -66,6 +70,12 @@ int loop(struct spawn *spawn)
 			fcallerror("cond_var_lock_acquire", err);
 			die();
 		}
+
+		/* FIXME It might make sense to keep the timeout very low
+		 *       in the beginning and later increase it when all
+		 *       tasks are finished and we rarely (or never?) have
+		 *       to handle jobs.
+		 */
 
 		clock_gettime(CLOCK_REALTIME, &ts);
 		ts.tv_sec += 1;	/* FIXME timeout value */
@@ -97,14 +107,18 @@ int loop(struct spawn *spawn)
 
 		if (-1 != newfd) {
 			err = _handle_accept(spawn, newfd);
-			if (unlikely(err))
+			if (unlikely(err)) {
+				fcallerror("_handle_accept", err);
 				die();	/* FIXME */
+			}
 		}
 
 		if (buffer) {
 			err = _handle_message(spawn, buffer);
-			if (unlikely(err))
+			if (unlikely(err)) {
+				fcallerror("_handle_message", err);
 				die();	/* FIXME */
+			}
 		}
 	}
 
@@ -233,7 +247,7 @@ static int _handle_accept(struct spawn *spawn, int newfd)
 
 static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 {
-	int err;
+	int err, tmp;
 	struct message_header header;
 
 	err = unpack_message_header(buffer, &header);
@@ -246,26 +260,47 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 
 	switch (header.type) {
 	case MESSAGE_TYPE_REQUEST_JOIN:
-		_handle_request_join(spawn, &header, buffer);
+		err = _handle_request_join(spawn, &header, buffer);
 		break;
 	case MESSAGE_TYPE_RESPONSE_JOIN:
-		_handle_response_join(spawn, &header, buffer);
+		err = _handle_response_join(spawn, &header, buffer);
 		break;
 	case MESSAGE_TYPE_PING:
-		_handle_ping(spawn, &header, buffer);
+		err = _handle_ping(spawn, &header, buffer);
 		break;
 	case MESSAGE_TYPE_EXEC:
-		_handle_exec(spawn, &header, buffer);
+		err = _handle_exec(spawn, &header, buffer);
+		break;
+	case MESSAGE_TYPE_REQUEST_BUILD_TREE:
+		err = _handle_request_build_tree(spawn, &header, buffer);
+		break;
+	case MESSAGE_TYPE_RESPONSE_BUILD_TREE:
+		err = _handle_response_build_tree(spawn, &header, buffer);
 		break;
 	default:
 		error("Dropping unexpected message of type %d from %d.", header.type, header.src);
+		err = -ESOMEFAULT;
+	}
+
+	if (unlikely(err)) {
+		error("Message handler failed with error %d.", err);
+		goto fail;
 	}
 
 	err = buffer_pool_push(&spawn->bufpool, buffer);
-	if (unlikely(err))
+	if (unlikely(err)) {
 		fcallerror("buffer_pool_push", err);
+		return err;
+	}
 
 	return 0;
+
+fail:
+	tmp = buffer_pool_push(&spawn->bufpool, buffer);
+	if (unlikely(tmp))
+		fcallerror("buffer_pool_push", tmp);
+
+	return err;
 }
 
 static int _handle_jobs(struct spawn *spawn)
@@ -343,7 +378,12 @@ static int _handle_request_join(struct spawn *spawn, struct message_header *head
 		job = LIST_ENTRY(p, struct job, list);
 
 		if (JOB_TYPE_BUILD_TREE == job->type) {
-			((struct job_build_tree *)job)->children += 1;
+			err = _declare_child_alive((struct job_build_tree *)job, header->src);
+			if (unlikely(err)) {
+				fcallerror("_declare_child_alive", err);
+				goto fail;
+			}
+
 			++matches;
 		}
 	}
@@ -463,9 +503,101 @@ static int _handle_exec(struct spawn *spawn, struct message_header *header, stru
 		die();	/* FIXME ?*/
 	}
 
+	log("Spawning process '%s' on host '%s' on request from %d.",
+	    msg.argv[0], msg.host, header->src);
+
 	err = spawn->exec->ops->exec(spawn->exec, msg.host, msg.argv);
 	if (unlikely(err)) {
 		error("Spawn plugin exec function failed with error %d.", err);
+		goto fail;
+	}
+
+	err = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("free_message_payload", err);
+		return err;
+	}
+
+	return 0;
+
+fail:
+	tmp = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(tmp))
+		fcallerror("free_message_payload", tmp);
+
+	return err;
+}
+
+static int _handle_request_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	int err, tmp;
+	struct message_request_build_tree msg;
+	struct job *job;
+
+	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		die();	/* FIXME ?*/
+	}
+
+	err = alloc_job_build_tree(spawn->alloc, spawn, msg.nhosts,
+	                           (const char** )msg.hosts, &job);
+	if (unlikely(err)) {
+		fcallerror("alloc_job_build_tree", err);
+		goto fail;
+	}
+
+	list_insert_before(&spawn->jobs, &job->list);
+
+	err = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("free_message_payload", err);
+		return err;
+	}
+
+	return 0;
+
+fail:
+	tmp = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(tmp))
+		fcallerror("free_message_payload", tmp);
+
+	return err;
+}
+
+static int _handle_response_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	int err, tmp;
+	struct list *p;
+	struct job *job;
+	struct message_response_build_tree msg;
+	int matches;
+
+	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		die();	/* FIXME ?*/
+	}
+
+	matches = 0;
+
+	LIST_FOREACH(p, &spawn->jobs) {
+		job = LIST_ENTRY(p, struct job, list);
+
+		if (JOB_TYPE_BUILD_TREE == job->type) {
+			err = _declare_child_ready((struct job_build_tree *)job, header->src);
+			if (unlikely(err)) {
+				fcallerror("_declare_child_alive", err);
+				goto fail;
+			}
+
+			++matches;
+		}
+	}
+
+	if (1 != matches) {
+		error("Found %d jobs of type JOB_TYPE_JOIN instead of just one.", matches);
+		err = -ESOMEFAULT;
 		goto fail;
 	}
 
@@ -567,6 +699,60 @@ static int _peeraddr(int fd, ui32 *ip, ui32 *portnum)
 
 	*ip      = ntohl(sa.sin_addr.s_addr);
 	*portnum = ntohs(sa.sin_port);
+
+	return 0;
+}
+
+static int _declare_child_alive(struct job_build_tree *job, int id)
+{
+	int i;
+	int ok;
+
+	ok = 0;
+
+	for (i = 0; i < job->nchildren; ++i) {
+		if (job->children[i].id == id) {
+			if (unlikely(!job->children[i].state == UNKNOWN)) {
+				error("Incorrect state %d (expected UNKNOWN = %d)",
+				      job->children[i].state, UNKNOWN);
+			}
+
+			job->children[i].state = ALIVE;
+			ok = 1;
+		}
+	}
+
+	if (unlikely(!ok)) {
+		error("Found no matching children with id %d.", id);
+		return -ESOMEFAULT;
+	}
+
+	return 0;
+}
+
+static int _declare_child_ready(struct job_build_tree *job, int id)
+{
+	int i;
+	int ok;
+
+	ok = 0;
+
+	for (i = 0; i < job->nchildren; ++i) {
+		if (job->children[i].id == id) {
+			if (unlikely(!job->children[i].state == ALIVE)) {
+				error("Incorrect state %d (expected ALIVE = %d)",
+				      job->children[i].state, ALIVE);
+			}
+
+			job->children[i].state = READY;
+			ok = 1;
+		}
+	}
+
+	if (unlikely(!ok)) {
+		error("Found no matching children with id %d.", id);
+		return -ESOMEFAULT;
+	}
 
 	return 0;
 }
