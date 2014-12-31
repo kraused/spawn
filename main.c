@@ -34,14 +34,14 @@
  */
 struct _args_other
 {
-	/* Address of the father to connect to. Obviously needs
+	/* Address of the parent to connect to. Obviously needs
 	 * to be passed via command line (or environment).
 	 */
 	struct sockaddr_in	sa;
-	/* Network identifier of the father. Required for the
+	/* Network identifier of the parent. Required for the
 	 * header of the MESSAGE_TYPE_REQUEST_JOIN message.
 	 */
-	int			father;
+	int			parent;
 	/* Size of the network. Required in order to setup the
 	 * LFT.
 	 */
@@ -57,7 +57,7 @@ static int _main_on_other(int argc, char **argv);
 static int _localaddr(struct sockaddr_in *sa);
 static int _parse_argv_on_other(int argc, char **argv, struct _args_other *args);
 static int _redirect_stdio();
-static int _connect_to_father(struct spawn *spawn, struct sockaddr_in *sa);
+static int _connect_to_parent(struct spawn *spawn, struct sockaddr_in *sa);
 
 
 int main(int argc, char **argv)
@@ -142,7 +142,7 @@ static int _main_on_local(int argc, char **argv)
 		return err;
 	}
 
-	err = alloc_job_build_tree(alloc, &job);
+	err = alloc_job_build_tree(alloc, &spawn, devel_nhosts, devel_hostlist, &job);
 	if (unlikely(err)) {
 		fcallerror("alloc_job_build_tree", err);
 		goto fail;
@@ -216,7 +216,7 @@ static int _main_on_other(int argc, char **argv)
 		return err;
 	}
 
-	err = spawn_setup_on_other(&spawn, args.size, args.here);
+	err = spawn_setup_on_other(&spawn, args.size, args.parent, args.here);
 	if (unlikely(err)) {
 		error("Failed to setup spawn instance.");
 		return err;
@@ -240,9 +240,9 @@ static int _main_on_other(int argc, char **argv)
 		return err;
 	}
 
-	err = _connect_to_father(&spawn, &args.sa);
+	err = _connect_to_parent(&spawn, &args.sa);
 	if (unlikely(err)) {
-		error("Failed to connect to father process.");
+		error("Failed to connect to parent process.");
 		return err;
 	}
 
@@ -256,7 +256,7 @@ static int _main_on_other(int argc, char **argv)
 						 *	 But if it is configurable we cannot
 						 *       start the watchdog here but first
 						 *       need to receive the options from
-						 *       the father.
+						 *       the parent.
 						 *	 We could also start with a hardcoded
 						 *       default and then change it afterwards!
 						 */
@@ -265,7 +265,7 @@ static int _main_on_other(int argc, char **argv)
 		/* continue anyway. */
 	}
 
-	err = alloc_job_join(alloc, args.father, &job);
+	err = alloc_job_join(alloc, args.parent, &job);
 	if (unlikely(err)) {
 		fcallerror("alloc_job_join", err);
 		goto fail;
@@ -336,7 +336,7 @@ static int _parse_argv_on_other(int argc, char **argv, struct _args_other *args)
 	}
 	args->sa.sin_port = htons((short )p);
 
-	args->father = strtol(argv[3], NULL, 10);
+	args->parent = strtol(argv[3], NULL, 10);
 	args->size   = strtol(argv[4], NULL, 10);
 	args->here   = strtol(argv[5], NULL, 10);
 
@@ -374,9 +374,9 @@ static int _redirect_stdio()
 }
 
 /*
- * Connect to the father in the tree. This is done outside of the main loop.
+ * Connect to the parent in the tree. This is done outside of the main loop.
  */
-static int _connect_to_father(struct spawn *spawn, struct sockaddr_in *sa)
+static int _connect_to_parent(struct spawn *spawn, struct sockaddr_in *sa)
 {
 	int err;
 	int fd;
