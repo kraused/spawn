@@ -83,6 +83,11 @@ struct comm
 	 * busy.
 	 */
 	struct queue		*waiter;
+
+	/* Storage for outgoing broadcast messages.
+	 */
+	struct buffer		*bcastb;
+	int			bcastp;
 };
 
 /*

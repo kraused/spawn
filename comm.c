@@ -81,6 +81,9 @@ int comm_ctor(struct comm *self, struct alloc *alloc,
 	self->recvb    = NULL;
 	self->sendb    = NULL;
 
+	self->bcastb = NULL;
+	self->bcastp = -1;
+
 	err = thread_ctor(&self->thread);
 	if (unlikely(err)) {
 		error("struct thread constructor failed with error %d.", err);
@@ -655,6 +658,45 @@ static int _comm_fill_sendb(struct comm *self)
 	struct message_header header;
 
 	while (1) {
+		if ((buffer = self->bcastb)) {
+			n = 1;
+			for (i = 0; i < self->npollfds - 1; ++i)
+				n += (NULL == self->sendb[i]);
+
+			/* Do not process normal messages until we have finished the
+			 * broadcast.
+			 * TODO This is not really optimal but simplifies the logic.
+			 */
+			if (n < self->npollfds)
+				break;
+
+			for (i = 0; i < self->npollfds - 1; ++i) {
+				if (self->bcastp == i)
+					continue;
+
+				self->sendb[i] = buffer;
+				break;
+			}
+			for (; i < self->npollfds - 1; ++i) {
+				if (self->bcastp == i)
+					continue;
+
+				err = _copy_buffer(self->bufpool, buffer, &self->sendb[i]);
+				if (unlikely(err)) {
+					fcallerror("_copy_buffer", err);
+					die();	/* FIXME? */
+				}
+			}
+
+			self->bcastb = NULL;
+			self->bcastp = -1;
+
+			/* If we reached this point all send buffers are full so we might
+			 * as well break.
+			 */
+			break;
+		}
+
 		err = _comm_queue_peek(&self->sendq, &buffer);
 		if (-ENOENT == err)
 			break;
@@ -666,64 +708,83 @@ static int _comm_fill_sendb(struct comm *self)
 			return err;
 
 		if (MESSAGE_FLAG_BCAST & header.flags) {
-			/* FIXME This is not really optimal. We are draining all
-			 *	 buffers before processing the broadcast message.
-			 */
-
-			n = 1;
-			for (i = 0; i < self->npollfds - 1; ++i)
-				n += (NULL == self->sendb[i]);
-
-			if (n != self->npollfds)
-				break;
-		} else {
-			/* Route local message directly to the receive queue.
-			 */
-			if (self->net->here == header.dst) {
-				err = _comm_queue_dequeue(&self->sendq, (void *)&buffer);
-				if (unlikely(err))
-					return err;
-
-				err = buffer_seek(buffer, 0);
-				if (unlikely(err)) {
-					fcallerror("buffer_seek", err);
-					die();	/* Pretty much impossible anyway
-						 * so why bother?
-						 */
-				}
-				err = _comm_queue_enqueue(&self->recvq, buffer);
-				if (unlikely(err))
-					fcallerror("_comm_queue_enqueue", err);
-					/* Will cause a memory leak that we just
-					 * have to live with. */
-
-				continue;
+			if (self->bcastb) {
+				error("bcastb must be NULL at this point.");
+				die();
 			}
 
-			if (unlikely((header.dst < 0) ||
-			             (header.dst >= self->net->size) ||
-			             (-1 == self->net->lft[header.dst]))) {
-				error("Dropping invalid message " \
-				      "with destination %d.", header.dst);
+			err = _comm_queue_dequeue(&self->sendq, &buffer);
+			if (unlikely(err))
+				return err;
 
-				err = _comm_queue_dequeue(&self->sendq, &buffer);
-				if (unlikely(err)) {
-					fcallerror("queue_dequeue", err);
-					return err;
-				}
-
-				continue;
+			err = buffer_seek(buffer, 0);
+			if (unlikely(err)) {
+				fcallerror("buffer_seek", err);
+				die();	/* Pretty much impossible anyway
+					 * so why bother?
+					 */
 			}
 
-			if (self->sendb[self->net->lft[header.dst]])
-				break;
+			self->bcastb = buffer;
+			/* This broadcast message originated from this host so we shoul
+			 * not omit any ports when sending it out.
+			 */
+			self->bcastp = -1;
+
+			/* Take another spin and let the broadcast logic handle the case. */
+			continue;
 		}
+
+		/* MESSAGE_FLAG_UCAST & header.flags is true.
+		 */
+
+		/* Route local message directly to the receive queue.
+		 */
+		if (self->net->here == header.dst) {
+			err = _comm_queue_dequeue(&self->sendq, &buffer);
+			if (unlikely(err))
+				return err;
+
+			err = buffer_seek(buffer, 0);
+			if (unlikely(err)) {
+				fcallerror("buffer_seek", err);
+				die();	/* Pretty much impossible anyway
+					 * so why bother?
+					 */
+			}
+
+			err = _comm_queue_enqueue(&self->recvq, buffer);
+			if (unlikely(err))
+				fcallerror("_comm_queue_enqueue", err);
+				/* Will cause a memory leak that we just
+				 * have to live with. */
+
+			continue;
+		}
+
+		if (unlikely((header.dst < 0) ||
+		             (header.dst >= self->net->size) ||
+		             (-1 == self->net->lft[header.dst]))) {
+			error("Dropping invalid message " \
+			      "with destination %d.", header.dst);
+
+			err = _comm_queue_dequeue(&self->sendq, &buffer);
+			if (unlikely(err)) {
+				fcallerror("queue_dequeue", err);
+				return err;
+			}
+
+			continue;
+		}
+
+		if (self->sendb[self->net->lft[header.dst]])
+			break;
 
 		err = _comm_queue_dequeue(&self->sendq, (void *)&buffer);
 		if (unlikely(err))
 			return err;
 
-		/* We use the position pointer as a write */
+		/* We use the position pointer as a write water-level gauge */
 		err = buffer_seek(buffer, 0);
 		if (unlikely(err)) {
 			fcallerror("buffer_seek", err);
@@ -732,18 +793,7 @@ static int _comm_fill_sendb(struct comm *self)
 				 */
 		}
 
-		if (MESSAGE_FLAG_BCAST & header.flags) {
-			self->sendb[0] = buffer;
-			for (i = 1; i < self->npollfds - 1; ++i) {
-				err = _copy_buffer(self->bufpool, buffer, &self->sendb[i]);
-				if (unlikely(err)) {
-					fcallerror("_copy_buffer", err);
-					die();	/* FIXME? */
-				}
-			}
-		} else {
-			self->sendb[self->net->lft[header.dst]] = buffer;
-		}
+		self->sendb[self->net->lft[header.dst]] = buffer;
 	}
 
 	return 0;
@@ -822,6 +872,7 @@ static int _comm_reads(struct comm *self)
 {
 	int err;
 	int i;
+	struct message_header header;
 
 	for (i = 0; i < self->npollfds - 1; ++i) {
 		if (!(self->pollfds[i+1].revents & POLLIN))
@@ -855,12 +906,46 @@ static int _comm_reads(struct comm *self)
 						 * a lot of bad things may happen.
 						 * Better to stop here. */
 		} else {
-			/* FIXME We still need to handle routing here. */
-
 			err = buffer_seek(self->recvb[i], 0);
 			if (unlikely(err)) {
 				fcallerror("buffer_seek", err);
 				die();
+			}
+
+			err = _secretly_copy_header(self->recvb[i], &header);
+			if (unlikely(err))
+				return err;
+
+			/* Handle unicast routing.
+			 */
+			if ((MESSAGE_FLAG_UCAST & header.flags) &&
+			    (self->net->here != header.dst)) {
+				err = _comm_queue_enqueue(&self->sendq, self->recvb[i]);
+				if (unlikely(err))
+					fcallerror("_comm_queue_enqueue", err);
+					/* Lost message. */
+
+				self->recvb[i] = NULL;
+				continue;
+			}
+
+			/* Handle broadcast routing. Only necessary if the number of ports
+			 * equals at least two (i.e., npollfds equals at least 3).
+			 */
+			if ((MESSAGE_FLAG_BCAST & header.flags) &&
+			    (self->npollfds > 2)) {
+				if (self->bcastb) {
+					error("Currently we can only handle one broadcast at a time.");	/* FIXME */
+					die();
+				}
+
+				err = _copy_buffer(self->bufpool, self->recvb[i], &self->bcastb);
+				if (unlikely(err)) {
+					fcallerror("_copy_buffer", err);
+					die();	/* FIXME? */
+				}
+
+				self->bcastp = i;
 			}
 
 			/* FIXME This is not very efficient. The queue is now protected by
@@ -876,10 +961,6 @@ static int _comm_reads(struct comm *self)
 			err = _comm_queue_enqueue(&self->recvq, self->recvb[i]);
 			if (unlikely(err))
 				fcallerror("_comm_queue_enqueue", err);
-				/* Will cause a memory leak that we just
-				 * have to live with. */
-
-			self->recvb[i] = NULL;
 
 			err = cond_var_broadcast(&self->cond);
 			if (unlikely(err))
@@ -890,6 +971,8 @@ static int _comm_reads(struct comm *self)
 				fcallerror("cond_var_lock_release", err);
 				die();
 			}
+
+			self->recvb[i] = NULL;
 		}
 	}
 
