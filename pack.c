@@ -349,6 +349,11 @@ int buffer_pool_ctor(struct buffer_pool *self, struct alloc *alloc, ll size)
 
 	self->alloc = alloc;
 
+	if (unlikely(0 == size)) {
+		error("Size must be non-zero. Setting size = 1.");
+		size = 1;
+	}
+
 	/* TODO Make the 1K buffer size configurable. */
 	err = _enqueue_bunch_of_buffers(self, size, 1024);
 	if (unlikely(err))
@@ -482,6 +487,11 @@ dequeue:
 
 		/* Safe to ignore error. */
 		queue_size(&self->queue, &size);
+
+		if (unlikely(0 == size)) {
+			error("Queue size equals zero.");
+			die();
+		}
 
 		/* TODO We could probably do better than doubling the size. */
 		err = queue_change_capacity(&self->queue, 2*size);
