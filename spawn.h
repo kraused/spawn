@@ -42,6 +42,10 @@ struct spawn
 	 */
 	const char		**hosts;
 
+	/* Participant id of the parent.
+	 */
+	int			parent;
+
 	struct network		tree;
 	struct comm		comm;
 	struct buffer_pool	bufpool;
@@ -80,7 +84,7 @@ int spawn_setup_on_local(struct spawn *self, int nhosts,
  * Setup the spawn instance on all other hosts.
  */
 int spawn_setup_on_other(struct spawn *self, int nhosts,
-                         int here);
+                         int parent, int here);
 
 /*
  * Load the exec plugin.

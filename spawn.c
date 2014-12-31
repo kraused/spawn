@@ -105,6 +105,8 @@ int spawn_setup_on_local(struct spawn *self, int nhosts,
 	if (unlikely((nhosts < 0) || !hosts || (treewidth < 0)))
 		return -EINVAL;
 
+	self->parent = -1;
+
 	err = _copy_hosts(self, nhosts, hosts);
 	if (unlikely(err))
 		return err;
@@ -135,9 +137,13 @@ fail1:
 	return err;
 }
 
-int spawn_setup_on_other(struct spawn *self, int nhosts, int here)
+int spawn_setup_on_other(struct spawn *self, int nhosts,
+                         int parent, int here)
 {
 	int err;
+
+	self->nhosts = nhosts;
+	self->parent = parent;
 
 	err = _setup_tree(&self->tree, self->alloc, nhosts + 1, here);
 	if (unlikely(err))
