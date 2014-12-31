@@ -41,6 +41,19 @@ static int _unpack_message_exec(struct buffer *buffer,
                                 struct message_exec *msg);
 static int _free_message_exec(struct alloc *alloc,
                               const struct message_exec *msg);
+static int _pack_message_request_build_tree(struct buffer *buffer,
+                                            const struct message_request_build_tree *msg);
+static int _unpack_message_request_build_tree(struct buffer *buffer,
+                                              struct alloc *alloc,
+                                              struct message_request_build_tree *msg);
+static int _free_message_request_build_tree(struct alloc *alloc,
+                                            const struct message_request_build_tree *msg);
+static int _pack_message_response_build_tree(struct buffer *buffer,
+                                             const struct message_response_build_tree *msg);
+static int _unpack_message_response_build_tree(struct buffer *buffer,
+                                               struct message_response_build_tree *msg);
+static int _free_message_response_build_tree(struct alloc *alloc,
+                                             const struct message_response_build_tree *msg);
 
 
 int pack_message_header(struct buffer *buffer,
@@ -203,6 +216,14 @@ static int _pack_message_something(struct buffer *buffer, int type, void *msg)
 		err = _pack_message_exec(buffer,
 		                    (const struct message_exec *)msg);
 		break;
+	case MESSAGE_TYPE_REQUEST_BUILD_TREE:
+		err = _pack_message_request_build_tree(buffer,
+		                    (const struct message_request_build_tree *)msg);
+		break;
+	case MESSAGE_TYPE_RESPONSE_BUILD_TREE:
+		err = _pack_message_response_build_tree(buffer,
+		                    (const struct message_response_build_tree *)msg);
+		break;
 	default:
 		error("Unknown message type %d.", type);
 		err = -ESOMEFAULT;
@@ -236,6 +257,14 @@ static int _alloc_message_something(struct alloc *alloc, int type, void **msg)
 	case MESSAGE_TYPE_EXEC:
 		err = ZALLOC(alloc, msg, 1, sizeof(struct message_exec),
 		             "struct message_exec");
+		break;
+	case MESSAGE_TYPE_REQUEST_BUILD_TREE:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_request_build_tree),
+		             "struct message_request_build_tree");
+		break;
+	case MESSAGE_TYPE_RESPONSE_BUILD_TREE:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_response_build_tree),
+		             "struct message_response_build_tree");
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -274,6 +303,14 @@ static int _unpack_message_something(struct buffer *buffer, struct alloc *alloc,
 		err = _unpack_message_exec(buffer, alloc,
 		                    (struct message_exec *)msg);
 		break;
+	case MESSAGE_TYPE_REQUEST_BUILD_TREE:
+		err = _unpack_message_request_build_tree(buffer, alloc,
+		                    (struct message_request_build_tree *)msg);
+		break;
+	case MESSAGE_TYPE_RESPONSE_BUILD_TREE:
+		err = _unpack_message_response_build_tree(buffer,
+		                    (struct message_response_build_tree *)msg);
+		break;
 	default:
 		error("Unknown message type %d.", type);
 		err = -ESOMEFAULT;
@@ -307,6 +344,14 @@ static int _free_message_something(struct alloc *alloc, int type, void *msg)
 	case MESSAGE_TYPE_EXEC:
 		err = _free_message_exec(alloc,
 		                    (struct message_exec *)msg);
+		break;
+	case MESSAGE_TYPE_REQUEST_BUILD_TREE:
+		err = _free_message_request_build_tree(alloc,
+		                    (struct message_request_build_tree *)msg);
+		break;
+	case MESSAGE_TYPE_RESPONSE_BUILD_TREE:
+		err = _free_message_response_build_tree(alloc,
+		                    (struct message_response_build_tree *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -426,36 +471,17 @@ static int _pack_message_exec(struct buffer *buffer,
 {
 	int err;
 	int i;
-	ui32 argc, n, hostlen;
 
-	hostlen = strlen(msg->host);
-
-	err = buffer_pack_ui32(buffer, &hostlen, 1);
+	err = buffer_pack_string(buffer, msg->host);
 	if (unlikely(err))
 		return err;
 
-	n = 0;
-	for (argc = 0; msg->argv[argc]; ++argc)
-		n += (strlen(msg->argv[argc]) + 1);
+	i = 0;
+	while (msg->argv[i]) ++i;
 
-	err = buffer_pack_ui32(buffer, &argc, 1);
+	err = buffer_pack_array_of_str(buffer, i, msg->argv);
 	if (unlikely(err))
 		return err;
-
-	err = buffer_pack_ui32(buffer, &n, 1);
-	if (unlikely(err))
-		return err;
-
-	err = buffer_pack_si8(buffer, (si8 *)msg->host, hostlen + 1);
-	if (unlikely(err))
-		return err;
-
-	for (i = 0; msg->argv[i]; ++i) {
-		err = buffer_pack_si8(buffer, (si8* )msg->argv[i],
-		                      strlen(msg->argv[i]) + 1);
-		if (unlikely(err))
-			return err;
-	}
 
 	return 0;
 }
@@ -464,101 +490,109 @@ static int _unpack_message_exec(struct buffer *buffer,
                                 struct alloc *alloc,
                                 struct message_exec *msg)
 {
-	int err, tmp;
-	int i;
-	char **p;
+	int err;
 
-	err = buffer_unpack_ui32(buffer, &msg->_hostlen, 1);
+	err = buffer_unpack_string(buffer, alloc, (char **)&msg->host);
 	if (unlikely(err))
 		return err;
 
-	err = buffer_unpack_ui32(buffer, &msg->_argc, 1);
+	err = buffer_unpack_array_of_str(buffer, alloc,
+	                                 &msg->_argc, (char ***)&msg->argv);
 	if (unlikely(err))
 		return err;
-
-	err = buffer_unpack_ui32(buffer, &msg->_sz, 1);
-	if (unlikely(err))
-		return err;
-
-	err = ZALLOC(alloc, (void **)&msg->host, (msg->_hostlen + 1),
-	             sizeof(char*), "host");
-	if (unlikely(err)) {
-		fcallerror("ZALLOC", err);
-		return err;
-	}
-
-	err = ZALLOC(alloc, (void **)&p, (msg->_argc + 1),
-	             sizeof(char*), "argv");
-	if (unlikely(err)) {
-		fcallerror("ZALLOC", err);
-		goto fail1;
-	}
-
-	err = ZALLOC(alloc, (void **)&p[0], msg->_sz,
-	             sizeof(char), "argv[0]");
-	if (unlikely(err)) {
-		fcallerror("ZALLOC", err);
-		goto fail2;
-	}
-
-	err = buffer_unpack_si8(buffer, (si8* )msg->host, msg->_hostlen + 1);
-	if (unlikely(err))
-		goto fail3;
-
-	err = buffer_unpack_si8(buffer, (si8* )p[0], msg->_sz);
-	if (unlikely(err))
-		goto fail3;
-
-	for (i = 1; i < (int )msg->_argc; ++i) {
-		p[i] = p[i-1] + (strlen(p[i-1]) + 1);
-	}
-	p[msg->_argc] = NULL;
-
-	msg->argv = p;
 
 	return 0;
-
-fail3:
-	tmp = ZFREE(alloc, (void **)&p[0], msg->_sz, sizeof(char), "");
-	if (unlikely(tmp))
-		fcallerror("ZFREE", tmp);
-
-fail2:
-	tmp = ZFREE(alloc, (void **)&p, msg->_argc, sizeof(char*), "");
-	if (unlikely(tmp))
-		fcallerror("ZFREE", tmp);
-
-fail1:
-	tmp = ZFREE(alloc, (void **)&msg->host, msg->_hostlen + 1, sizeof(char), "");
-	if (unlikely(tmp))
-		fcallerror("ZFREE", tmp);
-
-	return err;
 }
 
 static int _free_message_exec(struct alloc *alloc,
                               const struct message_exec *msg)
 {
 	int err;
+	int i;
 
-	err = ZFREE(alloc, (void **)&msg->argv[0], msg->_sz, sizeof(char), "");
+	for (i = 0; i < msg->_argc; ++i) {
+		err = ZFREE(alloc, (void **)&msg->argv[i],
+		            strlen(msg->argv[i]) + 1,
+		            sizeof(char), "");
+		if (unlikely(err)) {
+			fcallerror("ZFREE", err);
+			return err;
+		}
+	}
+
+	err = ZFREE(alloc, (void **)&msg->argv, msg->_argc, sizeof(char *), "");
 	if (unlikely(err)) {
 		fcallerror("ZFREE", err);
 		return err;
 	}
 
-	err = ZFREE(alloc, (void **)&msg->argv, msg->_argc, sizeof(char*), "");
+	err = ZFREE(alloc, (void **)&msg->host, strlen(msg->host) + 1, sizeof(char), "");
 	if (unlikely(err)) {
 		fcallerror("ZFREE", err);
 		return err;
 	}
 
-	err = ZFREE(alloc, (void **)&msg->host, msg->_hostlen + 1, sizeof(char), "");
-	if (unlikely(err)) {
-		fcallerror("ZFREE", err);
-		return err;
-	}
+	return 0;
+}
 
+static int _pack_message_request_build_tree(struct buffer *buffer,
+                                            const struct message_request_build_tree *msg)
+{
+	int err;
+
+	err = buffer_pack_array_of_str(buffer, msg->nhosts, msg->hosts);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _unpack_message_request_build_tree(struct buffer *buffer,
+                                              struct alloc *alloc,
+                                              struct message_request_build_tree *msg)
+{
+	int err;
+
+	err = buffer_unpack_array_of_str(buffer, alloc, &msg->nhosts, &msg->hosts);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _free_message_request_build_tree(struct alloc *alloc,
+                                            const struct message_request_build_tree *msg)
+{
+	return 0;
+}
+
+static int _pack_message_response_build_tree(struct buffer *buffer,
+                                             const struct message_response_build_tree *msg)
+{
+	int err;
+
+	err = buffer_pack_ui32(buffer, &msg->deads, 1);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _unpack_message_response_build_tree(struct buffer *buffer,
+                                               struct message_response_build_tree *msg)
+{
+	int err;
+
+	err = buffer_unpack_ui32(buffer, &msg->deads, 1);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _free_message_response_build_tree(struct alloc *alloc,
+                                             const struct message_response_build_tree *msg)
+{
 	return 0;
 }
 

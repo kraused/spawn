@@ -23,7 +23,9 @@ enum
 	MESSAGE_TYPE_REQUEST_JOIN	= 1001,
 	MESSAGE_TYPE_RESPONSE_JOIN,
 	MESSAGE_TYPE_PING,
-	MESSAGE_TYPE_EXEC
+	MESSAGE_TYPE_EXEC,
+	MESSAGE_TYPE_REQUEST_BUILD_TREE,
+	MESSAGE_TYPE_RESPONSE_BUILD_TREE
 };
 
 /*
@@ -31,8 +33,8 @@ enum
  */
 enum
 {
-	MESSAGE_FLAG_UCAST = 0,	/* default */
-	MESSAGE_FLAG_BCAST = 1
+	MESSAGE_FLAG_UCAST = 0x1,
+	MESSAGE_FLAG_BCAST = 0x2
 };
 
 /*
@@ -83,12 +85,21 @@ struct message_ping
 struct message_exec
 {
 	const char	*host;
-	char *const	*argv;
+	char 		**argv;
 
 	/* For internal bookkeeping */
-	ui32		_hostlen;
-	ui32		_argc;
-	ui32		_sz;
+	int		_argc;
+};
+
+struct message_request_build_tree
+{
+	int	nhosts;
+	char	**hosts;
+};
+
+struct message_response_build_tree
+{
+	ui32	deads;
 };
 
 /*
