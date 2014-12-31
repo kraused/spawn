@@ -16,25 +16,31 @@
 #include "alloc.h"
 #include "comm.h"
 #include "spawn.h"
-#include "plugin.h"
 #include "protocol.h"
+#include "helper.h"
 
 #include "devel.h"
 
 
-static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc);
+static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc,
+                                struct spawn *spawn, int nhosts, const char **hosts);
 static int _job_build_tree_dtor(struct job_build_tree *self);
 static int _free_job_build_tree(struct alloc *alloc, struct job_build_tree **self);
 static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed);
-static int _job_join_ctor(struct job_join *self, struct alloc *alloc, int father);
+static int _build_tree_spawn_children(struct job_build_tree *self, struct spawn *spawn);
+static int _send_request_build_tree_message(struct job_build_tree *self, struct spawn *spawn,
+                                            int dest, int nhosts, char **hosts);
+static int _send_response_build_tree_message(struct job_build_tree *self, struct spawn *spawn);
+static int _job_join_ctor(struct job_join *self, struct alloc *alloc, int parent);
 static int _job_join_dtor(struct job_join *self);
 static int _free_job_join(struct alloc *alloc, struct job_join **self);
 static int _join_work(struct job *job, struct spawn *spawn, int *completed);
-static int _join_send_request(struct spawn *spawn, int father);
+static int _join_send_request(struct spawn *spawn, int parent);
 static int _sockaddr(int fd, ui32 *ip, ui32 *portnum);
 
 
-int alloc_job_build_tree(struct alloc *alloc, struct job **self)
+int alloc_job_build_tree(struct alloc *alloc, struct spawn *spawn,
+                         int nhosts, const char **hosts, struct job **self)
 {
 	int err;
 
@@ -45,10 +51,11 @@ int alloc_job_build_tree(struct alloc *alloc, struct job **self)
 		return err;
 	}
 
-	return _job_build_tree_ctor((struct job_build_tree *)*self, alloc);
+	return _job_build_tree_ctor((struct job_build_tree *)*self, alloc,
+	                             spawn, nhosts, hosts);
 }
 
-int alloc_job_join(struct alloc *alloc, int father, struct job **self)
+int alloc_job_join(struct alloc *alloc, int parent, struct job **self)
 {
 	int err;
 
@@ -59,7 +66,7 @@ int alloc_job_join(struct alloc *alloc, int father, struct job **self)
 		return err;
 	}
 
-	return _job_join_ctor((struct job_join *)*self, alloc, father);
+	return _job_join_ctor((struct job_join *)*self, alloc, parent);
 }
 
 int free_job(struct job **self)
@@ -89,19 +96,113 @@ int free_job(struct job **self)
 }
 
 
-static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc *alloc)
+static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc,
+                                struct spawn *spawn, int nhosts, const char **hosts)
 {
+	int err, tmp;
+	int i, quot;
+
 	self->job.alloc = alloc;
 	self->job.type  = JOB_TYPE_BUILD_TREE;
 	self->job.work  = _build_tree_work;
 
 	list_ctor(&self->job.list);
 
+	self->alloc  = alloc;
+	self->phase  = 1;
+	self->nhosts = nhosts;
+
+	err = ZALLOC(alloc, (void **)&self->hosts, self->nhosts,
+	             sizeof(char *), "hosts");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		return err;
+	}
+
+	for (i = 0; i < self->nhosts; ++i) {
+		err = xstrdup(alloc, hosts[i], &self->hosts[i]);
+		if (unlikely(err)) {
+			fcallerror("xstrdup", err);
+			goto fail1;
+		}
+	}
+
+	self->nchildren = MIN(devel_tree_width, self->nhosts);
+	quot = self->nhosts/self->nchildren;
+
+	err = ZALLOC(alloc, (void **)&self->children, self->nchildren,
+	             sizeof(struct _job_build_tree_child), "children");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		goto fail2;
+	}
+
+	for (i = 0; i < self->nchildren; ++i) {
+		self->children[i].host    = quot*i;
+		self->children[i].nhosts  = quot - 1;
+		self->children[i].id      = spawn->tree.here + 1 + quot*i;
+		self->children[i].state   = UNBORN;
+		self->children[i].spawned = 0;
+	}
+
+	self->children[self->nchildren-1].nhosts =
+		self->nhosts - (self->children[self->nchildren-1].host + 1);
+
 	return 0;
+
+fail2:
+	tmp = ZFREE(self->alloc, (void **)&self->children, self->nchildren,
+	            sizeof(struct _job_build_tree_child), "");
+	if (unlikely(tmp))
+		fcallerror("ZFREE", tmp);
+
+fail1:
+	for (i = 0; i < self->nhosts; ++i) {
+		if (unlikely(!self->hosts[i]))
+			continue;
+
+		tmp = ZFREE(self->alloc, (void **)&self->hosts[i],
+		            (strlen(self->hosts[i]) + 1), sizeof(char), "");
+		if (unlikely(tmp))
+			fcallerror("ZFREE", tmp);
+	}
+
+	tmp = ZFREE(self->alloc, (void **)&self->hosts, self->nhosts,
+	            sizeof(char *), "");
+	if (unlikely(tmp))
+		fcallerror("ZFREE", tmp);
+
+	return err;
 }
 
 static int _job_build_tree_dtor(struct job_build_tree *self)
 {
+	int err;
+	int i;
+
+	err = ZFREE(self->alloc, (void **)&self->children, self->nchildren,
+	            sizeof(struct _job_build_tree_child), "");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
+		return err;
+	}
+
+	for (i = 0; i < self->nchildren; ++i) {
+		err = ZFREE(self->alloc, (void **)&self->hosts[i],
+		            (strlen(self->hosts[i]) + 1), sizeof(char), "");
+		if (unlikely(err)) {
+			fcallerror("ZFREE", err);
+			return err;
+		}
+	}
+
+	err = ZFREE(self->alloc, (void **)&self->hosts, self->nhosts,
+	            sizeof(char *), "");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
+		return err;
+	}
+
 	return 0;
 }
 
@@ -126,64 +227,220 @@ static int _free_job_build_tree(struct alloc *alloc, struct job_build_tree **sel
 static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed)
 {
 	struct job_build_tree *self = (struct job_build_tree *)job;
+	int err;
 
-	*completed = 0;
+	/* Phase 1: Spawn children.
+	 */
+	if (1 == self->phase) {
+		self->start = llnow();
 
-	if (0 == spawn->tree.here) {
-/* ************************************************************ */
+		err = _build_tree_spawn_children(self, spawn);
+		if (unlikely(err))
+			die();	/* FIXME */
+
+		self->phase += 1;
+	}
+
+	/* Phase 2: Wait for children to connect back and send out
+	 *          BUILD_TREE commands.
+	 */
+	if (2 == self->phase) {
+		int i, k;
+
+		k = 0;
+		for (i = 0; i < self->nchildren; ++i) {
+			if ((UNBORN  == self->children[i].state) ||
+			    (UNKNOWN == self->children[i].state)) {
+				/* FIXME Variable timeout value
+				 */
+				if (unlikely((llnow() - self->children[i].spawned) > 60)) {
+					die(); /* FIXME */
+				}
+			}
+
+			/* FIXME Include DEAD children */
+			k += (ALIVE == self->children[i].state);
+		}
+
+		if (k == self->nchildren) {
+			log("All children are alive after %lld second(s).", llnow() - self->start);
+
+			for (i = 0; i < self->nchildren; ++i) {
+				if (0 == self->children[i].nhosts) {
+					self->children[i].state = READY;
+					continue;
+				}
+
+				err = _send_request_build_tree_message(self, spawn,
+				                                       self->children[i].id,
+				                                       self->children[i].nhosts,
+				                                       self->hosts + self->children[i].host + 1);
+				if (unlikely(err)) {
+					fcallerror("_send_request_build_tree_message", err);
+					die();
+				}
+			}
+
+			self->phase = 3;
+		}
+	}
+
+	/* Phase 3: Wait for all children to report completion
+	 */
+	if (3 == self->phase) {
+		int i, k;
+
+		k = 0;
+		for (i = 0; i < self->nchildren; ++i) {
+			k += (READY == self->children[i].state);
+		}
+
+		if (k == self->nchildren) {
+			err = _send_response_build_tree_message(self, spawn);
+			if (unlikely(err)) {
+				fcallerror("_send_response_build_tree_message", err);
+				die();		/* FIXME */
+			}
+
+			log("Finished building the tree after %lld second(s).", llnow() - self->start);
+			*completed = 1;
+		}
+	}
+
+	if ((*completed) && (0 == spawn->tree.here)) {
+		/* Start handling plugins. */
+
+		/* FIXME If we are done we should start loading plugins.
+		 */
+	}
+
+	return 0;
+}
+
+static int _build_tree_spawn_children(struct job_build_tree *self, struct spawn *spawn)
+{
+	int err;
+	int i;
+	ui32 ip, portnum;
+	struct in_addr in;
+	struct message_header	header;
+	struct message_exec	msg;
+	char host[32];
 	char argv1[32];
 	char argv2[32];
 	char argv3[32];
 	char argv4[32];
 	char argv5[32];
-
-	int i, n;
-	int j;
-	int err;
-	struct in_addr in;
-	ui32 ip, portnum;
+	char *argv[] = {SPAWN_EXE_OTHER,
+	                argv1, argv2,
+	                argv3, argv4,
+	                argv5, NULL};
 
 	err = _sockaddr(spawn->tree.listenfd, &ip, &portnum);
-	if (unlikely(err))
-		die();
+	if (unlikely(err)) {
+		fcallerror("_sockaddr", err);
+		return err;
+	}
 
-	in.s_addr = htonl(ip);
+	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
 
-	snprintf(argv1, sizeof(argv1), "%s", inet_ntoa(in));
-	snprintf(argv2, sizeof(argv2), "%d", (int )portnum);
+	header.src   = spawn->tree.here;
+	header.dst   = 0;
+	header.flags = MESSAGE_FLAG_UCAST;
+	header.type  = MESSAGE_TYPE_EXEC;
 
-	n = (spawn->nhosts + devel_tree_width - 1)/devel_tree_width;
+	msg.host = host;
+	msg.argv = argv;
 
-	for (i = 0, j = 1; i < spawn->nhosts; i += n, ++j) {
-		/* FIXME Threaded spawning! Take devel_fanout into account. */
+	for (i = 0; i < self->nchildren; ++i) {
+		/* FIXME Capture errors from those snprintf()s! */
 
-		snprintf(argv3, sizeof(argv3), "%d", 0);		/* my participant id */
-		snprintf(argv4, sizeof(argv4), "%d", spawn->nhosts);	/* size */
-		snprintf(argv5, sizeof(argv5), "%d", i + 1);		/* their participant id */
+		snprintf(host, sizeof(host), self->hosts[self->children[i].host]);
 
-		char *const argw[] = {SPAWN_EXE_OTHER,
-		                      argv1, argv2,
-		                      argv3, argv4,
-		                      argv5, NULL};
-		err = spawn->exec->ops->exec(spawn->exec, "localhost", argw);
+		in.s_addr = htonl(ip);
+		snprintf(argv1, sizeof(argv1), "%s", inet_ntoa(in));
+		snprintf(argv2, sizeof(argv2), "%d", (int )portnum);
+
+		snprintf(argv3, sizeof(argv3), "%d", spawn->tree.here);	/* my participant id */
+		snprintf(argv4, sizeof(argv4), "%d", spawn->nhosts);	/* number of hosts */
+		snprintf(argv5, sizeof(argv5), "%d", self->children[i].id);
+
+		err = spawn_send_message(spawn, &header, (void *)&msg);
 		if (unlikely(err))
-			die();
-	}
-/* ************************************************************ */
-	}
+			fcallerror("spawn_send_message", err);	/* Continue anyway. Node will be marked
+								 * as down later when we do not hear back
+								 */
 
-	*completed = 1;
+		self->children[i].spawned = llnow();
+		self->children[i].state   = UNKNOWN;
+	}
 
 	return 0;
 }
 
-static int _job_join_ctor(struct job_join *self, struct alloc *alloc, int father)
+static int _send_request_build_tree_message(struct job_build_tree *self, struct spawn *spawn,
+                                            int dest, int nhosts, char **hosts)
+{
+	int err;
+	struct message_header             header;
+	struct message_request_build_tree msg;
+
+	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
+
+	header.src   = spawn->tree.here;        /* Always the same */
+	header.dst   = dest;
+	header.flags = MESSAGE_FLAG_UCAST;
+	header.type  = MESSAGE_TYPE_REQUEST_BUILD_TREE;
+
+	msg.nhosts = nhosts;
+	msg.hosts  = hosts;
+
+	err = spawn_send_message(spawn, &header, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("spawn_send_message", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static int _send_response_build_tree_message(struct job_build_tree *self, struct spawn *spawn)
+{
+	int err;
+	struct message_header              header;
+	struct message_response_build_tree msg;
+
+	if (-1 == spawn->parent)
+		return 0;
+
+	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
+
+	header.src   = spawn->tree.here;        /* Always the same */
+	header.dst   = spawn->parent;
+	header.flags = MESSAGE_FLAG_UCAST;
+	header.type  = MESSAGE_TYPE_RESPONSE_BUILD_TREE;
+
+	msg.deads = 0;	/* FIXME */
+
+	err = spawn_send_message(spawn, &header, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("spawn_send_message", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static int _job_join_ctor(struct job_join *self, struct alloc *alloc, int parent)
 {
 	self->job.alloc = alloc;
 	self->job.type  = JOB_TYPE_JOIN;
 	self->job.work  = _join_work;
 
-	self->father    = father;
+	self->parent    = parent;
 	self->acked     = 0;
 
 	list_ctor(&self->job.list);
@@ -219,12 +476,14 @@ static int _join_work(struct job *job, struct spawn *spawn, int *completed)
 	int err;
 	struct job_join *self = (struct job_join *)job;
 
-	*completed = 0;
+	if (-1 != self->parent) {
+		err = _join_send_request(spawn, self->parent);
+		if (unlikely(err)) {
+			fcallerror("_join_send_request", err);
+			return err;
+		}
 
-	err = _join_send_request(spawn, self->father);
-	if (unlikely(err)) {
-		fcallerror("_join_send_request", err);
-		return err;
+		self->parent = -1;
 	}
 
 	if (1 == self->acked) {
@@ -235,7 +494,7 @@ static int _join_work(struct job *job, struct spawn *spawn, int *completed)
 	return 0;
 }
 
-static int _join_send_request(struct spawn *spawn, int father)
+static int _join_send_request(struct spawn *spawn, int parent)
 {
 	int err;
 	struct message_header       header;
@@ -247,7 +506,7 @@ static int _join_send_request(struct spawn *spawn, int father)
 	memset(&msg   , 0, sizeof(msg));
 
 	header.src   = spawn->tree.here;	/* Always the same */
-	header.dst   = father;
+	header.dst   = parent;
 	header.flags = MESSAGE_FLAG_UCAST;
 	header.type  = MESSAGE_TYPE_REQUEST_JOIN;
 
