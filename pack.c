@@ -219,6 +219,53 @@ DEFINE_PACK_UNPACK_FUNCTIONS(ui32)
 DEFINE_PACK_UNPACK_FUNCTIONS(si64)
 DEFINE_PACK_UNPACK_FUNCTIONS(ui64)
 
+int buffer_pack_string(struct buffer *self, const char *string)
+{
+	int err;
+	ui64 len;
+
+	len = strlen(string) + 1;
+
+	err = buffer_pack_ui64(self, &len, 1);
+	if (unlikely(err))
+		return err;
+
+	err = buffer_pack_si8(self, (si8 *)string, len + 1);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+int buffer_unpack_string(struct buffer *self, struct alloc *alloc, const char **string)
+{
+	int err, tmp;
+	ui64 len;
+
+	err = buffer_unpack_ui64(self, &len, 1);
+	if (unlikely(err))
+		return err;
+
+	err = ZALLOC(alloc, (void **)string, len, sizeof(char), "string");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		goto fail;
+	}
+
+	err = buffer_unpack_si8(self, (si8* )*string, len + 1);
+	if (unlikely(err))
+		goto fail;
+
+	return 0;
+
+fail:
+	tmp = ZFREE(alloc, (void **)string, len, sizeof(char), "");
+	if (unlikely(tmp))
+		fcallerror("ZFREE", tmp);
+
+	return err;
+}
+
 int buffer_pool_ctor(struct buffer_pool *self, struct alloc *alloc, ll size)
 {
 	int err, tmp;

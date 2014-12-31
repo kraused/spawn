@@ -114,6 +114,12 @@ int buffer_pack_ui64(struct buffer *self, const ui64 *value, ll num);
 int buffer_unpack_ui64(struct buffer *self, ui64 *value, ll num);
 
 /*
+ * Pack and unpack a zero terminated string.
+ */
+int buffer_pack_string(struct buffer *self, const char *string);
+int buffer_unpack_string(struct buffer *self, struct alloc *alloc, const char **string);
+
+/*
  * A thread-safe pool of buffers. Due to the asynchronous messaging scheme used in this
  * application keeping track of all buffers is a tricky business in particular if we like
  * to reuse buffers. The buffer pool (partially) solves the problem. A disadvantage of
