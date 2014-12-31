@@ -219,25 +219,25 @@ DEFINE_PACK_UNPACK_FUNCTIONS(ui32)
 DEFINE_PACK_UNPACK_FUNCTIONS(si64)
 DEFINE_PACK_UNPACK_FUNCTIONS(ui64)
 
-int buffer_pack_string(struct buffer *self, const char *string)
+int buffer_pack_string(struct buffer *self, const char *str)
 {
 	int err;
 	ui64 len;
 
-	len = strlen(string) + 1;
+	len = strlen(str) + 1;
 
 	err = buffer_pack_ui64(self, &len, 1);
 	if (unlikely(err))
 		return err;
 
-	err = buffer_pack_si8(self, (si8 *)string, len + 1);
+	err = buffer_pack_si8(self, (si8 *)str, len + 1);
 	if (unlikely(err))
 		return err;
 
 	return 0;
 }
 
-int buffer_unpack_string(struct buffer *self, struct alloc *alloc, const char **string)
+int buffer_unpack_string(struct buffer *self, struct alloc *alloc, char **str)
 {
 	int err, tmp;
 	ui64 len;
@@ -246,20 +246,85 @@ int buffer_unpack_string(struct buffer *self, struct alloc *alloc, const char **
 	if (unlikely(err))
 		return err;
 
-	err = ZALLOC(alloc, (void **)string, len, sizeof(char), "string");
+	err = ZALLOC(alloc, (void **)str, len, sizeof(char), "string");
 	if (unlikely(err)) {
 		fcallerror("ZALLOC", err);
 		goto fail;
 	}
 
-	err = buffer_unpack_si8(self, (si8* )*string, len + 1);
+	err = buffer_unpack_si8(self, (si8* )*str, len + 1);
 	if (unlikely(err))
 		goto fail;
 
 	return 0;
 
 fail:
-	tmp = ZFREE(alloc, (void **)string, len, sizeof(char), "");
+	tmp = ZFREE(alloc, (void **)str, len, sizeof(char), "");
+	if (unlikely(tmp))
+		fcallerror("ZFREE", tmp);
+
+	return err;
+}
+
+int buffer_pack_array_of_str(struct buffer *self, int n, char *const *str)
+{
+	int err;
+	ui64 len = n;
+	int i;
+
+	err = buffer_pack_ui64(self, &len, 1);
+	if (unlikely(err))
+		return err;
+
+	for (i = 0; i < n; ++i) {
+		err = buffer_pack_string(self, str[i]);
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
+int buffer_unpack_array_of_str(struct buffer *self, struct alloc *alloc,
+                               int *n, char ***str)
+{
+	int err, tmp;
+	ui64 len;
+	int i;
+
+	err = buffer_unpack_ui64(self, &len, 1);
+	if (unlikely(err))
+		return err;
+
+	*n = len;
+
+	err = ZALLOC(alloc, (void **)str, len, sizeof(char *), "");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		goto fail;
+	}
+
+	for (i = 0; i < len; ++i) {
+		err = buffer_unpack_string(self, alloc, &(*str)[i]);
+		if (unlikely(err))
+			goto fail;
+	}
+
+	return 0;
+
+fail:
+	for (i = 0; i < len; ++i) {
+		if (unlikely(!(*str)[i]))
+			continue;
+
+		tmp = ZFREE(alloc, (void **)&(*str)[i],
+		            strlen((*str)[i]) + 1,
+		            sizeof(char), "");
+		if (unlikely(tmp))
+			fcallerror("ZFREE", tmp);
+	}
+
+	tmp = ZFREE(alloc, (void **)str, len, sizeof(char *), "");
 	if (unlikely(tmp))
 		fcallerror("ZFREE", tmp);
 

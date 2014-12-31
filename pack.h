@@ -116,8 +116,15 @@ int buffer_unpack_ui64(struct buffer *self, ui64 *value, ll num);
 /*
  * Pack and unpack a zero terminated string.
  */
-int buffer_pack_string(struct buffer *self, const char *string);
-int buffer_unpack_string(struct buffer *self, struct alloc *alloc, const char **string);
+int buffer_pack_string(struct buffer *self, const char *str);
+int buffer_unpack_string(struct buffer *self, struct alloc *alloc, char **str);
+
+/*
+ * Pack and unpack an array of strings.
+ */
+int buffer_pack_array_of_str(struct buffer *self, int n, char *const *str);
+int buffer_unpack_array_of_str(struct buffer *self, struct alloc *alloc,
+                               int *n, char ***str);
 
 /*
  * A thread-safe pool of buffers. Due to the asynchronous messaging scheme used in this
