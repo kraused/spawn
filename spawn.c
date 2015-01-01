@@ -21,6 +21,8 @@
 #include "helper.h"
 #include "protocol.h"
 
+#include "devel.h"
+
 
 static int _copy_hosts(struct spawn *self, int nhosts, const char **hosts);
 static int _free_hosts(struct spawn* self);
@@ -90,6 +92,21 @@ int spawn_dtor(struct spawn *self)
 		return err;
 	}
 
+	if (self->wkpool) {
+		err = exec_worker_pool_dtor(self->wkpool);
+		if (unlikely(err)) {
+			fcallerror("exec_worker_pool_dtor", err);
+			return err;
+		}
+
+		err = ZFREE(self->alloc, (void **)&self->wkpool, 1,
+		            sizeof(struct exec_worker_pool), "");
+		if (err) {
+			fcallerror("ZFREE", tmp);
+			return err;
+		}
+	}
+
 	memset(self, 0, sizeof(*self));
 
 	return 0;
@@ -141,26 +158,53 @@ int spawn_setup_on_other(struct spawn *self, int nhosts,
 	return 0;
 }
 
-int spawn_load_exec_plugin(struct spawn *self, const char *name)
+int spawn_setup_worker_pool(struct spawn *self, const char *path)
 {
 	struct plugin *plu;
+	int err, tmp;
 
 	if (unlikely(self->exec)) {
 		warn("self->exec is not NULL. This may cause a memory leak.");
 		self->exec = NULL;
 	}
 
-	plu = load_plugin(name);
+	plu = load_plugin(path);
 	if (unlikely(!plu))
 		return -ESOMEFAULT;	/* load_plugin() reported reason. */
 
 	self->exec = cast_to_exec_plugin(plu);
 	if (unlikely(!self->exec)) {
-		error("Plugin '%s' is not an exec plugin.", name);
+		error("Plugin '%s' is not an exec plugin.", path);
 		return -EINVAL;
 	}
 
+	err = ZALLOC(self->alloc, (void **)&self->wkpool, 1,
+	             sizeof(struct exec_worker_pool), "worker pool");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		return err;
+	}
+
+	err = exec_worker_pool_ctor(self->wkpool, self->alloc,
+	                            devel_fanout, 32*devel_fanout,	/* FIXME capacity */
+	                            self->exec);
+	if (unlikely(err)) {
+		fcallerror("exec_worker_pool_ctor", err);
+		goto fail;
+	}
+
 	return 0;
+
+fail:
+	tmp = ZFREE(self->alloc, (void **)&self->wkpool, 1,
+                     sizeof(struct exec_worker_pool), "");
+	if (tmp)
+		fcallerror("ZFREE", tmp);
+
+	/* TODO We are leaking a plugin.
+	 */
+
+	return err;
 }
 
 int spawn_bind_listenfd(struct spawn *self, struct sockaddr *addr, ull addrlen)

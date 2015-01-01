@@ -8,12 +8,14 @@
 #include "network.h"
 #include "pack.h"
 #include "list.h"
+#include "worker.h"
 
 struct sockaddr;
 
 struct alloc;
 struct message_header;
 struct exec_plugin;
+
 
 /*
  * Main data structure that stores everything required by the program.
@@ -36,21 +38,20 @@ struct spawn
 	int			parent;
 
 	struct network		tree;
+
 	struct comm		comm;
 	struct buffer_pool	bufpool;
 
-	/* Direct child processes. Unless the tree width is large enough
-	 * this will only be subset of all processes spawned.
+	/* List of jobs to be executed. See loop() in loop.c.
 	 */
-	int			nprocs;
-	struct process		*procs;
-
 	struct list		jobs;
 
-	struct exec_plugin	*exec;
-
-	/* FIXME List of threads
+	/* List of tasks.
 	 */
+	struct list		tasks;
+
+	struct exec_plugin	*exec;
+	struct exec_worker_pool	*wkpool;
 };
 
 /*
@@ -76,9 +77,11 @@ int spawn_setup_on_other(struct spawn *self, int nhosts,
                          int parent, int here);
 
 /*
- * Load the exec plugin.
+ * Load the exec plugin and setup the worker pool. The workers are not yet
+ * active. path is the filesystem path to the DSO file containing the exec
+ * plugin.
  */
-int spawn_load_exec_plugin(struct spawn *self, const char *name);
+int spawn_setup_worker_pool(struct spawn *self, const char *path);
 
 /*
  * Bind the listenfd to the given address.

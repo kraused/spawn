@@ -497,7 +497,7 @@ static int _unpack_message_exec(struct buffer *buffer,
 		return err;
 
 	err = buffer_unpack_array_of_str(buffer, alloc,
-	                                 &msg->_argc, (char ***)&msg->argv);
+	                                 &msg->argc, (char ***)&msg->argv);
 	if (unlikely(err))
 		return err;
 
@@ -510,7 +510,7 @@ static int _free_message_exec(struct alloc *alloc,
 	int err;
 	int i;
 
-	for (i = 0; i < msg->_argc; ++i) {
+	for (i = 0; i < (int )msg->argc; ++i) {
 		err = ZFREE(alloc, (void **)&msg->argv[i],
 		            strlen(msg->argv[i]) + 1,
 		            sizeof(char), "");
@@ -520,7 +520,7 @@ static int _free_message_exec(struct alloc *alloc,
 		}
 	}
 
-	err = ZFREE(alloc, (void **)&msg->argv, msg->_argc, sizeof(char *), "");
+	err = ZFREE(alloc, (void **)&msg->argv, msg->argc, sizeof(char *), "");
 	if (unlikely(err)) {
 		fcallerror("ZFREE", err);
 		return err;

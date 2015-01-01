@@ -15,6 +15,7 @@
 #include "config.h"
 #include "compiler.h"
 #include "error.h"
+#include "alloc.h"
 #include "loop.h"
 #include "spawn.h"
 #include "comm.h"
@@ -37,6 +38,10 @@ static int _handle_response_join(struct spawn *spawn, struct message_header *hea
 static int _send_response_join(struct spawn *spawn, int dest);
 static int _handle_ping(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_exec(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
+                                 struct message_header *header,
+                                 struct message_exec *msg,
+                                 struct exec_work_item **wkitem);
 static int _handle_request_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_response_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum);
@@ -52,7 +57,6 @@ int loop(struct spawn *spawn)
 	int newfd;
 	struct buffer *buffer;
 	struct timespec ts;
-
 
 	_ping(spawn, 60);	/* First time nothing is send. */
 
@@ -85,7 +89,7 @@ int loop(struct spawn *spawn)
 			if (-ETIMEDOUT == err)
 				break;
 			if (unlikely(err)) {
-				fcallerror("cond_var_wait", err);
+				fcallerror("cond_var_timedwait", err);
 				die();
 			}
 		}
@@ -97,7 +101,7 @@ int loop(struct spawn *spawn)
 
 		err = comm_dequeue(&spawn->comm, &buffer);
 		if (unlikely(err && (-ENOENT != err)))
-			die();
+			die();	/* FIXME */
 
 		err = cond_var_lock_release(&spawn->comm.cond);
 		if (unlikely(err)) {
@@ -496,6 +500,7 @@ static int _handle_exec(struct spawn *spawn, struct message_header *header, stru
 {
 	int err, tmp;
 	struct message_exec msg;
+	struct exec_work_item *wkitem;
 
 	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {
@@ -503,12 +508,9 @@ static int _handle_exec(struct spawn *spawn, struct message_header *header, stru
 		die();	/* FIXME ?*/
 	}
 
-	debug("Spawning process '%s' on host '%s' on request from %d.",
-	      msg.argv[0], msg.host, header->src);
-
-	err = spawn->exec->ops->exec(spawn->exec, msg.host, msg.argv);
+	err = _alloc_exec_work_item(spawn->wkpool, header, &msg, &wkitem);
 	if (unlikely(err)) {
-		error("Spawn plugin exec function failed with error %d.", err);
+		fcallerror("_alloc_exec_work_item", err);
 		goto fail;
 	}
 
@@ -518,12 +520,76 @@ static int _handle_exec(struct spawn *spawn, struct message_header *header, stru
 		return err;
 	}
 
+	/* Try to insert the worker item. Spin as long as necessary if the queue is
+	 * currently full.
+	 */
+	do {
+		err = exec_worker_pool_enqueue(spawn->wkpool, wkitem);
+		if (-ENOMEM == err)
+			/* FIXME sched_yield()? */
+			continue;
+		if (unlikely(err)) {
+			fcallerror("exec_worker_pool_enqueue", err);
+			return err;
+		}
+	} while (err);
+
 	return 0;
 
 fail:
+	assert(err);
+
 	tmp = free_message_payload(header, spawn->alloc, (void *)&msg);
 	if (unlikely(tmp))
 		fcallerror("free_message_payload", tmp);
+
+	return err;
+}
+
+static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
+                                 struct message_header *header,
+                                 struct message_exec *msg,
+                                 struct exec_work_item **wkitem)
+{
+	int err, tmp;
+
+	err = ZALLOC(wkpool->alloc, (void **)wkitem, 1, sizeof(struct exec_work_item), "work item");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		return err;
+	}
+
+	(*wkitem)->argc   = msg->argc;
+	(*wkitem)->client = header->src;
+
+	err = xstrdup(wkpool->alloc, msg->host, &(*wkitem)->host);
+	if (unlikely(err)) {
+		fcallerror("xstrdup", err);
+		goto fail1;
+	}
+
+	err = array_of_str_dup(wkpool->alloc, msg->argc, (const char **)msg->argv, &(*wkitem)->argv);
+	if (unlikely(err)) {
+		fcallerror("array_of_str_dup", err);
+		goto fail2;
+	}
+
+	return 0;
+
+fail2:
+	assert(err);
+
+	tmp = ZFREE(wkpool->alloc, (void **)&(*wkitem)->host,
+	            strlen((*wkitem)->host) + 1, sizeof(char), "");
+	if (unlikely(tmp))
+		fcallerror("ZFREE", tmp);
+
+fail1:
+	assert(err);
+
+	tmp = ZFREE(wkpool->alloc, (void **)wkitem, 1, sizeof(struct exec_work_item), "");
+	if (unlikely(tmp))
+		fcallerror("ZFREE", tmp);
 
 	return err;
 }

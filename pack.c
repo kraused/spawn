@@ -266,13 +266,12 @@ fail:
 	return err;
 }
 
-int buffer_pack_array_of_str(struct buffer *self, int n, char *const *str)
+int buffer_pack_array_of_str(struct buffer *self, ui64 n, char *const *str)
 {
 	int err;
-	ui64 len = n;
 	int i;
 
-	err = buffer_pack_ui64(self, &len, 1);
+	err = buffer_pack_ui64(self, &n, 1);
 	if (unlikely(err))
 		return err;
 
@@ -286,25 +285,22 @@ int buffer_pack_array_of_str(struct buffer *self, int n, char *const *str)
 }
 
 int buffer_unpack_array_of_str(struct buffer *self, struct alloc *alloc,
-                               int *n, char ***str)
+                               ui64 *n, char ***str)
 {
 	int err, tmp;
-	ui64 len;
 	int i;
 
-	err = buffer_unpack_ui64(self, &len, 1);
+	err = buffer_unpack_ui64(self, n, 1);
 	if (unlikely(err))
 		return err;
 
-	*n = len;
-
-	err = ZALLOC(alloc, (void **)str, len, sizeof(char *), "");
+	err = ZALLOC(alloc, (void **)str, *n, sizeof(char *), "");
 	if (unlikely(err)) {
 		fcallerror("ZALLOC", err);
 		goto fail;
 	}
 
-	for (i = 0; i < len; ++i) {
+	for (i = 0; i < (*n); ++i) {
 		err = buffer_unpack_string(self, alloc, &(*str)[i]);
 		if (unlikely(err))
 			goto fail;
@@ -313,7 +309,7 @@ int buffer_unpack_array_of_str(struct buffer *self, struct alloc *alloc,
 	return 0;
 
 fail:
-	for (i = 0; i < len; ++i) {
+	for (i = 0; i < (*n); ++i) {
 		if (unlikely(!(*str)[i]))
 			continue;
 
@@ -324,7 +320,7 @@ fail:
 			fcallerror("ZFREE", tmp);
 	}
 
-	tmp = ZFREE(alloc, (void **)str, len, sizeof(char *), "");
+	tmp = ZFREE(alloc, (void **)str, (*n), sizeof(char *), "");
 	if (unlikely(tmp))
 		fcallerror("ZFREE", tmp);
 

@@ -124,7 +124,7 @@ static int _main_on_local(int argc, char **argv)
 		return err;
 	}
 
-	err = spawn_load_exec_plugin(&spawn, EXEC_PLUGIN);
+	err = spawn_setup_worker_pool(&spawn, EXEC_PLUGIN);
 	if (unlikely(err))
 		return err;
 

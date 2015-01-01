@@ -122,9 +122,9 @@ int buffer_unpack_string(struct buffer *self, struct alloc *alloc, char **str);
 /*
  * Pack and unpack an array of strings.
  */
-int buffer_pack_array_of_str(struct buffer *self, int n, char *const *str);
+int buffer_pack_array_of_str(struct buffer *self, ui64 n, char *const *str);
 int buffer_unpack_array_of_str(struct buffer *self, struct alloc *alloc,
-                               int *n, char ***str);
+                               ui64 *n, char ***str);
 
 /*
  * A thread-safe pool of buffers. Due to the asynchronous messaging scheme used in this

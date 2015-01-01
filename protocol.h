@@ -85,15 +85,13 @@ struct message_ping
 struct message_exec
 {
 	const char	*host;
+	ui64		argc;
 	char 		**argv;
-
-	/* For internal bookkeeping */
-	int		_argc;
 };
 
 struct message_request_build_tree
 {
-	int	nhosts;
+	ui64	nhosts;
 	char	**hosts;
 };
 

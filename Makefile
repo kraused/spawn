@@ -8,7 +8,7 @@ CFLAGS   = -O0 -ggdb -Wall -std=gnu11 -fPIC
 # plugins can resolve symbols from the executable.
 LDFLAGS  = -Wl,--export-dynamic -ldl -lpthread
 
-OBJ      = main.o loop.o plugin.o spawn.o job.o pack.o protocol.o error.o helper.o queue.o comm.o thread.o network.o alloc.o watchdog.o
+OBJ      = main.o loop.o plugin.o spawn.o job.o pack.o protocol.o error.o helper.o queue.o comm.o thread.o network.o alloc.o watchdog.o worker.o
 SO       = plugins/local.so plugins/ssh.so
 
 default: spawn.exe $(SO)

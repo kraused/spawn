@@ -62,6 +62,9 @@ int thread_dtor(struct thread *self)
 {
 	int err;
 
+	/* FIXME Cancel the thread if it still running?
+	 */
+
 	err = pthread_mutex_destroy(&self->mutex);
 	if (unlikely(err)) {
 		fcallerror("pthread_mutex_destroy", err);
