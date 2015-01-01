@@ -2,6 +2,9 @@
 #ifndef SPAWN_QUEUE_H_INCLUDED
 #define SPAWN_QUEUE_H_INCLUDED 1
 
+#include "ints.h"
+
+
 /*
  * A generic queue storing pointers to something. The size of
  * the queue is fixed but the queue can be resized.
