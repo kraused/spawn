@@ -186,7 +186,7 @@ static int _send_ping(struct spawn *spawn, ll now)
 
 	msg.now = now;
 
-	log("Sending ping message.");
+	debug("Sending ping message.");
 
 	err = spawn_send_message(spawn, &header, (void *)&msg);
 	if (unlikely(err)) {
@@ -256,7 +256,7 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 		die();	/* FIXME */
 	}
 
-	log("Received a %d message from %d.", header.type, header.src);
+	debug("Received a %d message from %d.", header.type, header.src);
 
 	switch (header.type) {
 	case MESSAGE_TYPE_REQUEST_JOIN:
@@ -358,7 +358,7 @@ static int _handle_request_join(struct spawn *spawn, struct message_header *head
 		die();
 	}
 
-	log("Routing messages to %d via port %d.", dest, port);
+	debug("Routing messages to %d via port %d.", dest, port);
 
 	err = _fix_lft(spawn, port, dest);
 	if (unlikely(err)) {
@@ -503,8 +503,8 @@ static int _handle_exec(struct spawn *spawn, struct message_header *header, stru
 		die();	/* FIXME ?*/
 	}
 
-	log("Spawning process '%s' on host '%s' on request from %d.",
-	    msg.argv[0], msg.host, header->src);
+	debug("Spawning process '%s' on host '%s' on request from %d.",
+	      msg.argv[0], msg.host, header->src);
 
 	err = spawn->exec->ops->exec(spawn->exec, msg.host, msg.argv);
 	if (unlikely(err)) {
