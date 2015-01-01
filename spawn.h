@@ -16,17 +16,6 @@ struct message_header;
 struct exec_plugin;
 
 /*
- * Record of a process on a (potentially remote) host.
- */
-struct process
-{
-	int	host;
-	ll	pid;
-	int	port;	/* Port through which the process is
-		         * reachable. */
-};
-
-/*
  * Main data structure that stores everything required by the program.
  */
 struct spawn
@@ -37,8 +26,8 @@ struct spawn
 	 * spawn program itself is running.
 	 */
 	int			nhosts;
-	/* Names of the hosts in the network. This is non-NULL only on
-	 * the root of the tree.
+	/* Names of the hosts in the network. This is non-NULL only in
+	 * the context of the master process (root of the tree).
 	 */
 	const char		**hosts;
 

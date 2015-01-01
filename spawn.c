@@ -24,8 +24,6 @@
 
 static int _copy_hosts(struct spawn *self, int nhosts, const char **hosts);
 static int _free_hosts(struct spawn* self);
-static int _alloc_procs(struct spawn *self, int nprocs);
-static int _free_procs(struct spawn* self);
 static int _setup_tree(struct network *self, struct alloc *alloc,
                        int size, int here);
 static int _tree_bind_listenfd(struct network *self, struct sockaddr *addr,
@@ -111,25 +109,16 @@ int spawn_setup_on_local(struct spawn *self, int nhosts,
 	if (unlikely(err))
 		return err;
 
-	err = _alloc_procs(self, treewidth);
-	if (unlikely(err))
-		goto fail1;
-
 	/* Since the master process needs to be part of the network we need
 	 * to increment the number of hosts.
 	 */
 	err = _setup_tree(&self->tree, self->alloc, nhosts + 1, 0);
 	if (unlikely(err))
-		goto fail2;
+		goto fail;
 
 	return 0;
 
-fail2:
-	assert(err);
-
-	_free_procs(self);	/* Ignore error. _free_procs() will report
-	                  	 * problems using error(). */
-fail1:
+fail:
 	assert(err);
 
 	_free_hosts(self);
@@ -278,39 +267,6 @@ static int _free_hosts(struct spawn* self)
 	err = array_of_str_free(self->alloc, nhosts, (char ***)&self->hosts);
 	if (unlikely(err))
 		return err;
-
-	return 0;
-}
-
-static int _alloc_procs(struct spawn *self, int nprocs)
-{
-	int err;
-
-	err = ZALLOC(self->alloc, (void **)&self->procs, nprocs,
-	             sizeof(struct process), "procs");
-	if (unlikely(err)) {
-		fcallerror("ZALLOC", err);
-		return err;
-	}
-
-	self->nprocs = nprocs;
-
-	return 0;
-}
-
-static int _free_procs(struct spawn* self)
-{
-	int err;
-	int nprocs = self->nprocs;
-
-	self->nprocs = 0;
-
-	err = ZFREE(self->alloc, (void **)&self->procs, nprocs,
-	            sizeof(struct process), "procs");
-	if (unlikely(err)) {
-		fcallerror("ZFREE", err);
-		return err;
-	}
 
 	return 0;
 }
