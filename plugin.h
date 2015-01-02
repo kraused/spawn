@@ -20,7 +20,7 @@ enum
 	 */
 	PLUGIN_EXEC,
 	/* Plugin which defines the actual task to be executed
-	 * on the hosts after successfull setup.
+	 * on the hosts after successful setup.
 	 */
 	PLUGIN_TASK
 };
@@ -46,8 +46,7 @@ struct plugin
  */
 struct plugin_ops
 {
-	/*
-	 * FIXME Pass command line arguments/options as the
+	/* FIXME Pass command line arguments/options as the
 	 *       second argument.
 	 */
 	int	(*init)(struct plugin *self, void *opts);
@@ -70,12 +69,11 @@ struct exec_plugin
  */
 struct exec_plugin_ops
 {
-	/*
-	 * FIXME Provide option/functionality for spawning
-	 *	 on a remote host where the spawn util itself
-	 * 	 is not available. This is possible for example
-	 *       by first transferring all applications to the
-	 *       remote host.
+	/* TODO Provide option/functionality for spawning
+	 *	on a remote host where the spawn util itself
+	 * 	is not available. This is possible for example
+	 *      by first transferring all applications to the
+	 *      remote host.
 	 */
 	int	(*exec)(struct exec_plugin *self,
 		        const char *host,
@@ -90,13 +88,6 @@ struct task_plugin
 {
 	struct plugin		base;
 
-	/* FIXME We could potentially support multiple tasks (running in separate
-	 *       threads). Therefore we could organize the task plugins in a linked
-	 *	 list.
-	 *	 If we have multiple tasks we need to have some kind of multiplexing
-	 *	 functionality.
-	 */
-
 	struct task_plugin_ops	*ops;
 };
 
@@ -105,7 +96,18 @@ struct task_plugin
  */
 struct task_plugin_ops
 {
-	int	(*task)(int argc, char **argv);
+	/* main() function executed in the context of the master process.
+	 * The function must canceable - If necessary by calling pthread_testcancel()
+	 * at times.
+	 */
+	int	(*local)(struct task_plugin *self,
+                         int argc, char **argv);
+        /* main() function executed in the context of a remote process.
+	 * The function must canceable - If necessary by calling pthread_testcancel()
+	 * at times.
+	 */
+	int	(*other)(struct task_plugin *self,
+                         int argc, char **argv);
 };
 
 

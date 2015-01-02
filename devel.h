@@ -23,10 +23,9 @@ static const char devel_hosts[] = "a[01-20],a35";
  * by a function.
  */
 static const char *devel_hostlist[] = {
-	"-",	/* local */
 	"a01", "a02", "a03", "a04", "a05", "a06", "a07", "a08",
 	"a09", "a10", "a11", "a12", "a13", "a14", "a15", "a16",
-	"a17", "a18", "a19", "a20", "a35"
+	"a17", "a18", "a19", "a20", "a35", "localhost", "localhost"
 };
 static const int devel_nhosts = sizeof(devel_hostlist)/sizeof(devel_hostlist[0]);
 
@@ -35,7 +34,7 @@ static const int devel_nhosts = sizeof(devel_hostlist)/sizeof(devel_hostlist[0])
  *
  * -o TreeWidth=3
  */
-static const int devel_tree_width = 20;
+static const int devel_tree_width = 3;
 
 /*
  * Fanout width. This parameter specifies how many processes are spawned in parallel. Note
@@ -50,6 +49,11 @@ static const int devel_fanout = 2;
  * For testing: Use an incomplete exec plugin that just spawns the process locally.
  */
 #define EXEC_PLUGIN SPAWN_INSTALL_PREFIX "/lib/local.so"
+
+/*
+ * For testing: A simple task plugin
+ */
+#define TASK_PLUGIN SPAWN_INSTALL_PREFIX "/lib/hello.so"
 
 #endif
 

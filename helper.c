@@ -206,6 +206,9 @@ int array_of_str_dup(struct alloc *alloc, int n, const char **istr,
 	}
 
 	for (i = 0; i < n; ++i) {
+		if (!istr[i])
+			continue;
+
 		err = xstrdup(alloc, istr[i], &(*ostr)[i]);
 		if (unlikely(err))
 			goto fail;
@@ -218,7 +221,7 @@ fail:
 
 	for (i = 0; i < n; ++i) {
 		if (!(*ostr)[i])
-			break;
+			continue;
 
 		/* Do not overwrite err at this point! */
 		tmp = FREE(alloc, (void **)&(*ostr)[i], strlen((*ostr)[i]) + 1,
@@ -232,8 +235,25 @@ fail:
 
 int array_of_str_free(struct alloc *alloc, int n, char ***str)
 {
-	/* FIXME Not implemented. */
-	return -ENOTIMPL;
+	int i;
+	int err;
+
+	for (i = 0; i < n; ++i) {
+		if (!(*str)[i])
+			continue;
+
+		/* Do not overwrite err at this point! */
+		err = FREE(alloc, (void **)&(*str)[i], strlen((*str)[i]) + 1,
+		           sizeof(char), "");
+		if (unlikely(err))
+			fcallerror("FREE", err);
+	}
+
+	err = ZALLOC(alloc, (void **)str, n, sizeof(char *), "");
+	if (unlikely(err))
+		fcallerror("ZFREE", err);
+
+	return 0;
 }
 
 int daemonize()

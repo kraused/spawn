@@ -131,6 +131,25 @@ int thread_join(struct thread *self)
 	return 0;
 }
 
+int thread_cancel(struct thread *self)
+{
+	int err;
+
+	err = pthread_cancel(self->handle);
+	if (unlikely(err)) {
+		fcallerror("pthread_cancel", err);
+		return -err;
+	}
+
+	err = thread_join(self);
+	if (unlikely(err))
+		return err;
+
+	atomic_write(self->state, THREAD_STATE_CANCELED);
+
+	return 0;
+}
+
 int lock_ctor(struct lock *self)
 {
 	int err;

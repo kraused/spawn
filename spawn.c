@@ -64,6 +64,7 @@ int spawn_ctor(struct spawn *self, struct alloc *alloc)
 	}
 
 	list_ctor(&self->jobs);
+	list_ctor(&self->tasks);
 
 	return 0;
 }
@@ -175,6 +176,8 @@ int spawn_setup_worker_pool(struct spawn *self, const char *path)
 	self->exec = cast_to_exec_plugin(plu);
 	if (unlikely(!self->exec)) {
 		error("Plugin '%s' is not an exec plugin.", path);
+		/* FIXME We are leaking a plugin.
+		 */
 		return -EINVAL;
 	}
 

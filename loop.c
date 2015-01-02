@@ -37,13 +37,14 @@ static int _handle_request_join(struct spawn *spawn, struct message_header *head
 static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _send_response_join(struct spawn *spawn, int dest);
 static int _handle_ping(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
-static int _handle_exec(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_request_exec(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
                                  struct message_header *header,
-                                 struct message_exec *msg,
+                                 struct message_request_exec *msg,
                                  struct exec_work_item **wkitem);
 static int _handle_request_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_response_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_request_task(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum);
 static int _fix_lft(struct spawn *spawn, int port, int dest);
 static int _peeraddr(int fd, ui32 *ip, ui32 *portnum);
@@ -272,14 +273,17 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 	case MESSAGE_TYPE_PING:
 		err = _handle_ping(spawn, &header, buffer);
 		break;
-	case MESSAGE_TYPE_EXEC:
-		err = _handle_exec(spawn, &header, buffer);
+	case MESSAGE_TYPE_REQUEST_EXEC:
+		err = _handle_request_exec(spawn, &header, buffer);
 		break;
 	case MESSAGE_TYPE_REQUEST_BUILD_TREE:
 		err = _handle_request_build_tree(spawn, &header, buffer);
 		break;
 	case MESSAGE_TYPE_RESPONSE_BUILD_TREE:
 		err = _handle_response_build_tree(spawn, &header, buffer);
+		break;
+	case MESSAGE_TYPE_REQUEST_TASK:
+		err = _handle_request_task(spawn, &header, buffer);
 		break;
 	default:
 		error("Dropping unexpected message of type %d from %d.", header.type, header.src);
@@ -496,10 +500,10 @@ static int _handle_ping(struct spawn *spawn, struct message_header *header, stru
 	return calm_the_watchdog();
 }
 
-static int _handle_exec(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+static int _handle_request_exec(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
 {
 	int err, tmp;
-	struct message_exec msg;
+	struct message_request_exec msg;
 	struct exec_work_item *wkitem;
 
 	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
@@ -548,7 +552,7 @@ fail:
 
 static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
                                  struct message_header *header,
-                                 struct message_exec *msg,
+                                 struct message_request_exec *msg,
                                  struct exec_work_item **wkitem)
 {
 	int err, tmp;
@@ -666,6 +670,42 @@ static int _handle_response_build_tree(struct spawn *spawn, struct message_heade
 		err = -ESOMEFAULT;
 		goto fail;
 	}
+
+	err = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("free_message_payload", err);
+		return err;
+	}
+
+	return 0;
+
+fail:
+	tmp = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(tmp))
+		fcallerror("free_message_payload", tmp);
+
+	return err;
+}
+
+static int _handle_request_task(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	int err, tmp;
+	struct message_request_task msg;
+	struct job *job;
+
+	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		die();	/* FIXME ?*/
+	}
+
+	err = alloc_job_task(spawn->alloc, msg.path, msg.channel, &job);
+	if (unlikely(err)) {
+		fcallerror("alloc_job_task", err);
+		goto fail;
+	}
+
+	list_insert_before(&spawn->jobs, &job->list);
 
 	err = free_message_payload(header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {

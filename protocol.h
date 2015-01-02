@@ -23,13 +23,14 @@ enum
 	MESSAGE_TYPE_REQUEST_JOIN	= 1001,
 	MESSAGE_TYPE_RESPONSE_JOIN,
 	MESSAGE_TYPE_PING,
-	MESSAGE_TYPE_EXEC,
+	MESSAGE_TYPE_REQUEST_EXEC,
 	MESSAGE_TYPE_REQUEST_BUILD_TREE,
-	MESSAGE_TYPE_RESPONSE_BUILD_TREE
+	MESSAGE_TYPE_RESPONSE_BUILD_TREE,
+	MESSAGE_TYPE_REQUEST_TASK
 };
 
 /*
- * Message flags
+ * Message flags.
  */
 enum
 {
@@ -82,7 +83,7 @@ struct message_ping
 	ui64	now;
 };
 
-struct message_exec
+struct message_request_exec
 {
 	const char	*host;
 	ui64		argc;
@@ -98,6 +99,12 @@ struct message_request_build_tree
 struct message_response_build_tree
 {
 	ui32	deads;
+};
+
+struct message_request_task
+{
+	const char	*path;
+	ui32		channel;
 };
 
 /*

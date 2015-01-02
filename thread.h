@@ -15,7 +15,8 @@ enum
 				 * (see thread_start()). */
 	THREAD_STATE_STARTED,
 	THREAD_STATE_DONE,
-	THREAD_STATE_JOINED
+	THREAD_STATE_JOINED,
+	THREAD_STATE_CANCELED
 };
 
 /*
@@ -62,6 +63,11 @@ int thread_start(struct thread *self, int (*main)(void *), void *arg);
  * structure can be accessed.
  */
 int thread_join(struct thread *self);
+
+/*
+ * Cancel the thread and join it.
+ */
+int thread_cancel(struct thread *self);
 
 /*
  * Check if a thread is done processing its task (but has not been joined yet).

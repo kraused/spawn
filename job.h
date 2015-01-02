@@ -14,9 +14,9 @@ enum
 {
 	JOB_TYPE_NOOP		= 0,
 	JOB_TYPE_BUILD_TREE,
-	JOB_TYPE_JOIN
+	JOB_TYPE_JOIN,
+	JOB_TYPE_TASK
 };
-
 
 /*
  * Base structure for all jobs.
@@ -58,7 +58,6 @@ struct _job_build_tree_child
 				 * declare a child as dead. */
 };
 
-
 /*
  * Task for building a tree.
  */
@@ -81,6 +80,7 @@ struct job_build_tree
 };
 
 /*
+ * Task for the process of joining the network.
  */
 struct job_join
 {
@@ -89,6 +89,17 @@ struct job_join
 	int		parent;
 	int		acked;	/* Set to one if a RESPONSE_JOIN has been
 			         * received. */
+};
+
+/*
+ * Task for loading plugins.
+ */
+struct job_task
+{
+	struct job	job;
+
+	char		*path;
+	int		channel;
 };
 
 /*
@@ -101,6 +112,12 @@ int alloc_job_build_tree(struct alloc *alloc, struct spawn *spawn,
  * Allocate a struct job_join on the heap and call the constructor.
  */
 int alloc_job_join(struct alloc *alloc, int parent, struct job **self);
+
+/*
+ * Allocate a struct job_task on the heap and call the constructor.
+ */
+int alloc_job_task(struct alloc *alloc, const char* path,
+                   int channel, struct job **self);
 
 /*
  * Destroy and free a heap allocated job structure.

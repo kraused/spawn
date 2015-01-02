@@ -224,15 +224,17 @@ int buffer_pack_string(struct buffer *self, const char *str)
 	int err;
 	ui64 len;
 
-	len = strlen(str) + 1;
+	len = (str) ? (strlen(str) + 1) : 0;
 
 	err = buffer_pack_ui64(self, &len, 1);
 	if (unlikely(err))
 		return err;
 
-	err = buffer_pack_si8(self, (si8 *)str, len + 1);
-	if (unlikely(err))
-		return err;
+	if (str) {
+		err = buffer_pack_si8(self, (si8 *)str, len);
+		if (unlikely(err))
+			return err;
+	}
 
 	return 0;
 }
@@ -246,15 +248,19 @@ int buffer_unpack_string(struct buffer *self, struct alloc *alloc, char **str)
 	if (unlikely(err))
 		return err;
 
-	err = ZALLOC(alloc, (void **)str, len, sizeof(char), "string");
-	if (unlikely(err)) {
-		fcallerror("ZALLOC", err);
-		goto fail;
-	}
+	*str = NULL;
 
-	err = buffer_unpack_si8(self, (si8* )*str, len + 1);
-	if (unlikely(err))
-		goto fail;
+	if (len > 0) {
+		err = ZALLOC(alloc, (void **)str, len, sizeof(char), "string");
+		if (unlikely(err)) {
+			fcallerror("ZALLOC", err);
+			goto fail;
+		}
+
+		err = buffer_unpack_si8(self, (si8* )*str, len);
+		if (unlikely(err))
+			goto fail;
+	}
 
 	return 0;
 

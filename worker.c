@@ -91,6 +91,11 @@ int exec_worker_pool_dtor(struct exec_worker_pool *self)
 	int err;
 	int i;
 
+	if (!self->done) {
+		error("Thread pool is still running.");
+		return -ESOMEFAULT;
+	}
+
 	for (i = 0; i < self->nthreads; ++i) {
 		err = thread_dtor(&self->threads[i]);
 		if (unlikely(err)) {
@@ -210,12 +215,20 @@ static int _thread_main(void *arg)
 			die();
 		}
 
+		/* FIXME Move this into a helper function
+		 */
 		/* FIXME Variable timeout value. The timeout value
 		 *       determines how long it takes to stop the
 		 *       threads.
 		 */
 		clock_gettime(CLOCK_REALTIME, &ts);
-		ts.tv_nsec += 10000;
+		ll d = 1000000;
+		if ((ts.tv_nsec + d) < 1000000000) {
+			ts.tv_nsec += d;
+		} else {
+			ts.tv_sec  += 1;
+			ts.tv_nsec = ts.tv_nsec + d - 1000000000;
+		}
 
 		while (!_work_available(self)) {
 			err = cond_var_timedwait(&self->cond, &ts);
@@ -304,6 +317,9 @@ static int _free_exec_work_item(struct exec_worker_pool *self,
 	int i;
 
 	for (i = 0; i < (*wkitem)->argc; ++i) {
+		if (!(*wkitem)->argv[i])
+			continue;
+
 		err = ZFREE(self->alloc, (void **)&(*wkitem)->argv[i],
 		            strlen((*wkitem)->argv[i]) + 1, sizeof(char), "");
 		if (unlikely(err)) {

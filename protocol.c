@@ -34,13 +34,13 @@ static int _unpack_message_ping(struct buffer *buffer,
                                 struct message_ping *msg);
 static int _free_message_ping(struct alloc *alloc,
                               const struct message_ping *msg);
-static int _pack_message_exec(struct buffer *buffer,
-                              const struct message_exec *msg);
-static int _unpack_message_exec(struct buffer *buffer,
-                                struct alloc *alloc,
-                                struct message_exec *msg);
-static int _free_message_exec(struct alloc *alloc,
-                              const struct message_exec *msg);
+static int _pack_message_request_exec(struct buffer *buffer,
+                                      const struct message_request_exec *msg);
+static int _unpack_message_request_exec(struct buffer *buffer,
+                                        struct alloc *alloc,
+                                        struct message_request_exec *msg);
+static int _free_message_request_exec(struct alloc *alloc,
+                                      const struct message_request_exec *msg);
 static int _pack_message_request_build_tree(struct buffer *buffer,
                                             const struct message_request_build_tree *msg);
 static int _unpack_message_request_build_tree(struct buffer *buffer,
@@ -54,6 +54,13 @@ static int _unpack_message_response_build_tree(struct buffer *buffer,
                                                struct message_response_build_tree *msg);
 static int _free_message_response_build_tree(struct alloc *alloc,
                                              const struct message_response_build_tree *msg);
+static int _pack_message_request_task(struct buffer *buffer,
+                                      const struct message_request_task *msg);
+static int _unpack_message_request_task(struct buffer *buffer,
+                                        struct alloc *alloc,
+                                        struct message_request_task *msg);
+static int _free_message_request_task(struct alloc *alloc,
+                                      const struct message_request_task *msg);
 
 
 int pack_message_header(struct buffer *buffer,
@@ -212,9 +219,9 @@ static int _pack_message_something(struct buffer *buffer, int type, void *msg)
 		err = _pack_message_ping(buffer,
 		                    (const struct message_ping *)msg);
 		break;
-	case MESSAGE_TYPE_EXEC:
-		err = _pack_message_exec(buffer,
-		                    (const struct message_exec *)msg);
+	case MESSAGE_TYPE_REQUEST_EXEC:
+		err = _pack_message_request_exec(buffer,
+		                    (const struct message_request_exec *)msg);
 		break;
 	case MESSAGE_TYPE_REQUEST_BUILD_TREE:
 		err = _pack_message_request_build_tree(buffer,
@@ -223,6 +230,10 @@ static int _pack_message_something(struct buffer *buffer, int type, void *msg)
 	case MESSAGE_TYPE_RESPONSE_BUILD_TREE:
 		err = _pack_message_response_build_tree(buffer,
 		                    (const struct message_response_build_tree *)msg);
+		break;
+	case MESSAGE_TYPE_REQUEST_TASK:
+		err = _pack_message_request_task(buffer,
+		                    (const struct message_request_task *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -254,9 +265,9 @@ static int _alloc_message_something(struct alloc *alloc, int type, void **msg)
 		err = ZALLOC(alloc, msg, 1, sizeof(struct message_ping),
 		             "struct message_ping");
 		break;
-	case MESSAGE_TYPE_EXEC:
-		err = ZALLOC(alloc, msg, 1, sizeof(struct message_exec),
-		             "struct message_exec");
+	case MESSAGE_TYPE_REQUEST_EXEC:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_request_exec),
+		             "struct message_request_exec");
 		break;
 	case MESSAGE_TYPE_REQUEST_BUILD_TREE:
 		err = ZALLOC(alloc, msg, 1, sizeof(struct message_request_build_tree),
@@ -265,6 +276,10 @@ static int _alloc_message_something(struct alloc *alloc, int type, void **msg)
 	case MESSAGE_TYPE_RESPONSE_BUILD_TREE:
 		err = ZALLOC(alloc, msg, 1, sizeof(struct message_response_build_tree),
 		             "struct message_response_build_tree");
+		break;
+	case MESSAGE_TYPE_REQUEST_TASK:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_request_task),
+		             "struct message_request_task");
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -299,9 +314,9 @@ static int _unpack_message_something(struct buffer *buffer, struct alloc *alloc,
 		err = _unpack_message_ping(buffer,
 		                    (struct message_ping *)msg);
 		break;
-	case MESSAGE_TYPE_EXEC:
-		err = _unpack_message_exec(buffer, alloc,
-		                    (struct message_exec *)msg);
+	case MESSAGE_TYPE_REQUEST_EXEC:
+		err = _unpack_message_request_exec(buffer, alloc,
+		                    (struct message_request_exec *)msg);
 		break;
 	case MESSAGE_TYPE_REQUEST_BUILD_TREE:
 		err = _unpack_message_request_build_tree(buffer, alloc,
@@ -310,6 +325,10 @@ static int _unpack_message_something(struct buffer *buffer, struct alloc *alloc,
 	case MESSAGE_TYPE_RESPONSE_BUILD_TREE:
 		err = _unpack_message_response_build_tree(buffer,
 		                    (struct message_response_build_tree *)msg);
+		break;
+	case MESSAGE_TYPE_REQUEST_TASK:
+		err = _unpack_message_request_task(buffer, alloc,
+		                    (struct message_request_task *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -341,9 +360,9 @@ static int _free_message_something(struct alloc *alloc, int type, void *msg)
 		err = _free_message_ping(alloc,
 		                    (struct message_ping *)msg);
 		break;
-	case MESSAGE_TYPE_EXEC:
-		err = _free_message_exec(alloc,
-		                    (struct message_exec *)msg);
+	case MESSAGE_TYPE_REQUEST_EXEC:
+		err = _free_message_request_exec(alloc,
+		                    (struct message_request_exec *)msg);
 		break;
 	case MESSAGE_TYPE_REQUEST_BUILD_TREE:
 		err = _free_message_request_build_tree(alloc,
@@ -352,6 +371,10 @@ static int _free_message_something(struct alloc *alloc, int type, void *msg)
 	case MESSAGE_TYPE_RESPONSE_BUILD_TREE:
 		err = _free_message_response_build_tree(alloc,
 		                    (struct message_response_build_tree *)msg);
+		break;
+	case MESSAGE_TYPE_REQUEST_TASK:
+		err = _free_message_request_task(alloc,
+		                    (struct message_request_task *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -466,8 +489,8 @@ static int _free_message_ping(struct alloc *alloc,
 	return 0;
 }
 
-static int _pack_message_exec(struct buffer *buffer,
-                              const struct message_exec *msg)
+static int _pack_message_request_exec(struct buffer *buffer,
+                                      const struct message_request_exec *msg)
 {
 	int err;
 	int i;
@@ -478,6 +501,7 @@ static int _pack_message_exec(struct buffer *buffer,
 
 	i = 0;
 	while (msg->argv[i]) ++i;
+	++i;	/* Trailing NULL pointer */
 
 	err = buffer_pack_array_of_str(buffer, i, msg->argv);
 	if (unlikely(err))
@@ -486,9 +510,9 @@ static int _pack_message_exec(struct buffer *buffer,
 	return 0;
 }
 
-static int _unpack_message_exec(struct buffer *buffer,
-                                struct alloc *alloc,
-                                struct message_exec *msg)
+static int _unpack_message_request_exec(struct buffer *buffer,
+                                        struct alloc *alloc,
+                                        struct message_request_exec *msg)
 {
 	int err;
 
@@ -504,13 +528,16 @@ static int _unpack_message_exec(struct buffer *buffer,
 	return 0;
 }
 
-static int _free_message_exec(struct alloc *alloc,
-                              const struct message_exec *msg)
+static int _free_message_request_exec(struct alloc *alloc,
+                                      const struct message_request_exec *msg)
 {
 	int err;
 	int i;
 
 	for (i = 0; i < (int )msg->argc; ++i) {
+		if (!msg->argv[i])
+			continue;
+
 		err = ZFREE(alloc, (void **)&msg->argv[i],
 		            strlen(msg->argv[i]) + 1,
 		            sizeof(char), "");
@@ -563,6 +590,25 @@ static int _unpack_message_request_build_tree(struct buffer *buffer,
 static int _free_message_request_build_tree(struct alloc *alloc,
                                             const struct message_request_build_tree *msg)
 {
+	int err;
+	int i;
+
+	for (i = 0; i < (int )msg->nhosts; ++i) {
+		err = ZFREE(alloc, (void **)&msg->hosts[i],
+		            strlen(msg->hosts[i]) + 1,
+		            sizeof(char), "");
+		if (unlikely(err)) {
+			fcallerror("ZFREE", err);
+			return err;
+		}
+	}
+
+	err = ZFREE(alloc, (void **)&msg->hosts, msg->nhosts, sizeof(char *), "");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
+		return err;
+	}
+
 	return 0;
 }
 
@@ -596,3 +642,49 @@ static int _free_message_response_build_tree(struct alloc *alloc,
 	return 0;
 }
 
+static int _pack_message_request_task(struct buffer *buffer,
+                                      const struct message_request_task *msg)
+{
+	int err;
+
+	err = buffer_pack_string(buffer, msg->path);
+	if (unlikely(err))
+		return err;
+
+	err = buffer_pack_ui32(buffer, &msg->channel, 1);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _unpack_message_request_task(struct buffer *buffer,
+                                        struct alloc *alloc,
+                                        struct message_request_task *msg)
+{
+	int err;
+
+	err = buffer_unpack_string(buffer, alloc, (char **)&msg->path);
+	if (unlikely(err))
+		return err;
+
+	err = buffer_unpack_ui32(buffer, &msg->channel, 1);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _free_message_request_task(struct alloc *alloc,
+                                      const struct message_request_task *msg)
+{
+	int err;
+
+	err = ZFREE(alloc, (void **)&msg->path, strlen(msg->path) + 1, sizeof(char), "");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
+		return err;
+	}
+
+	return 0;
+}
