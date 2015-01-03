@@ -60,6 +60,7 @@ static int _redirect_stdio();
 static int _connect_to_parent(struct spawn *spawn, struct sockaddr_in *sa);
 static struct optpool *_alloc_and_fill_optpool(struct alloc *alloc,
                                                const char *file, char **argv);
+static int _check_important_options(struct optpool *opts);
 
 
 int main(int argc, char **argv)
@@ -121,6 +122,15 @@ static int _main_on_local(int argc, char **argv)
 	}
 
 	opts = _alloc_and_fill_optpool(spawn.alloc, SPAWN_CONFIG_DEFAULT, argv);
+	if (unlikely(err))
+		return err;
+
+	/* It would be annoying to spawn thousands of processes and only notice that
+	 * we mistyped an option once the tree is completely set up. Instead we
+	 * check some important options (in particular those for which no default value
+	 * is read) in advance.
+	 */
+	err = _check_important_options(opts);
 	if (unlikely(err))
 		return err;
 
@@ -476,5 +486,18 @@ fail:
 		fcallerror("ZFREE", err);
 
 	return NULL;
+}
+
+static int _check_important_options(struct optpool *opts)
+{
+	const char *p;
+
+	p = optpool_find_by_key(opts, "TaskPlugin");
+	if (unlikely(!p)) {
+		error("Missing 'TaskPlugin' option.");
+		return -EINVAL;
+	}
+
+	return 0;
 }
 

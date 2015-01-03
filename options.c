@@ -142,7 +142,6 @@ const char *optpool_find_by_key(struct optpool *self, const char *key)
 int optpool_find_by_key_as_int(struct optpool *self,
                                const char *key, int *result)
 {
-	int err;
 	const char *val;
 	char *p;
 
