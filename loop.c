@@ -25,7 +25,6 @@
 #include "watchdog.h"
 #include "plugin.h"
 
-#include "devel.h"
 
 static int _work_available(struct spawn *spawn);
 static int _ping(struct spawn *spawn, int timeout);
@@ -646,7 +645,7 @@ static int _handle_request_build_tree(struct spawn *spawn, struct message_header
 	}
 
 	err = alloc_job_build_tree(spawn->alloc, spawn, msg.nhosts,
-	                           (const char** )msg.hosts, &job);
+	                           msg.hosts, &job);
 	if (unlikely(err)) {
 		fcallerror("alloc_job_build_tree", err);
 		goto fail;

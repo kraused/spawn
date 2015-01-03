@@ -20,11 +20,9 @@
 #include "helper.h"
 #include "task.h"
 
-#include "devel.h"
-
 
 static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc,
-                                struct spawn *spawn, int nhosts, const char **hosts);
+                                struct spawn *spawn, int nhosts, char **hosts);
 static int _job_build_tree_dtor(struct job_build_tree *self);
 static int _free_job_build_tree(struct alloc *alloc, struct job_build_tree **self);
 static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed);
@@ -48,7 +46,7 @@ static int _prepare_task_job(struct spawn *spawn);
 
 
 int alloc_job_build_tree(struct alloc *alloc, struct spawn *spawn,
-                         int nhosts, const char **hosts, struct job **self)
+                         int nhosts, char **hosts, struct job **self)
 {
 	int err;
 
@@ -124,7 +122,7 @@ int free_job(struct job **self)
 
 
 static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc,
-                                struct spawn *spawn, int nhosts, const char **hosts)
+                                struct spawn *spawn, int nhosts, char **hosts)
 {
 	int err, tmp;
 	int i, quot;

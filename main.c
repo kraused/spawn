@@ -24,8 +24,6 @@
 #include "loop.h"
 #include "job.h"
 
-#include "devel.h"
-
 
 /*
  * Some information is cumbersome to transfer via the wire since
@@ -134,7 +132,7 @@ static int _main_on_local(int argc, char **argv)
 	if (unlikely(err))
 		return err;
 
-	err = spawn_setup_on_local(&spawn, opts, devel_nhosts, devel_hostlist);
+	err = spawn_setup_on_local(&spawn, opts);
 	if (unlikely(err)) {
 		error("Failed to setup spawn instance.");
 		return err;
@@ -164,7 +162,8 @@ static int _main_on_local(int argc, char **argv)
 		return err;
 	}
 
-	err = alloc_job_build_tree(alloc, &spawn, devel_nhosts, devel_hostlist, &job);
+	err = alloc_job_build_tree(alloc, &spawn, 
+	                           spawn.nhosts, spawn.hosts, &job);
 	if (unlikely(err)) {
 		fcallerror("alloc_job_build_tree", err);
 		goto fail;
@@ -495,6 +494,12 @@ static int _check_important_options(struct optpool *opts)
 	p = optpool_find_by_key(opts, "TaskPlugin");
 	if (unlikely(!p)) {
 		error("Missing 'TaskPlugin' option.");
+		return -EINVAL;
+	}
+
+	p = optpool_find_by_key(opts, "Hosts");
+	if (unlikely(!p)) {
+		error("Missing 'Hosts' option.");
 		return -EINVAL;
 	}
 

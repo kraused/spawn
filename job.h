@@ -106,7 +106,7 @@ struct job_task
  * Allocate a struct job_build_tree on the heap and call the constructor.
  */
 int alloc_job_build_tree(struct alloc *alloc, struct spawn *spawn,
-                         int nhosts, const char **hosts, struct job **self);
+                         int nhosts, char **hosts, struct job **self);
 
 /*
  * Allocate a struct job_join on the heap and call the constructor.

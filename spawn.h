@@ -34,7 +34,7 @@ struct spawn
 	/* Names of the hosts in the network. This is non-NULL only in
 	 * the context of the master process (root of the tree).
 	 */
-	const char		**hosts;
+	char			**hosts;
 
 	/* Participant id of the parent.
 	 */
@@ -71,8 +71,7 @@ int spawn_dtor(struct spawn *self);
  * Setup the spawn instance on the local host.
  */
 int spawn_setup_on_local(struct spawn *self,
-                         struct optpool *opts, int nhosts,
-                         const char **hosts);
+                         struct optpool *opts);
 
 /*
  * Setup the spawn instance on all other hosts.

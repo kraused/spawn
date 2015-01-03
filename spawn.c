@@ -22,10 +22,10 @@
 #include "protocol.h"
 #include "options.h"
 
-#include "devel.h"
 
-
-static int _copy_hosts(struct spawn *self, int nhosts, const char **hosts);
+static int _copy_hosts(struct spawn *self, struct optpool *opts);
+static int _count_hosts(const char *hosts);
+static int _copy_up_to_char(const char *istr, char *ostr, int len, char x);
 static int _free_hosts(struct spawn* self);
 static int _setup_tree(struct network *self, struct alloc *alloc,
                        int size, int here);
@@ -129,7 +129,7 @@ int spawn_dtor(struct spawn *self)
 		err = ZFREE(self->alloc, (void **)&self->wkpool, 1,
 		            sizeof(struct exec_worker_pool), "");
 		if (err) {
-			fcallerror("ZFREE", tmp);
+			fcallerror("ZFREE", err);
 			return err;
 		}
 	}
@@ -139,26 +139,21 @@ int spawn_dtor(struct spawn *self)
 	return 0;
 }
 
-int spawn_setup_on_local(struct spawn *self,
-                         struct optpool *opts, int nhosts,
-                         const char **hosts)
+int spawn_setup_on_local(struct spawn *self, struct optpool *opts)
 {
 	int err;
-
-	if (unlikely((nhosts < 0) || !hosts))
-		return -EINVAL;
 
 	self->parent = -1;
 	self->opts   = opts;
 
-	err = _copy_hosts(self, nhosts, hosts);
+	err = _copy_hosts(self, opts);
 	if (unlikely(err))
 		return err;
 
 	/* Since the master process needs to be part of the network we need
 	 * to increment the number of hosts.
 	 */
-	err = _setup_tree(&self->tree, self->alloc, nhosts + 1, 0);
+	err = _setup_tree(&self->tree, self->alloc, self->nhosts + 1, 0);
 	if (unlikely(err))
 		goto fail;
 
@@ -356,19 +351,95 @@ fail:
 }
 
 
-static int _copy_hosts(struct spawn *self, int nhosts, const char **hosts)
+static int _copy_hosts(struct spawn *self, struct optpool *opts)
 {
-	int err;
+	int err, tmp;
+	const char *hosts;
+	char host[64];
+	int i, j;
 
-	/* FIXME Warn if the input is not ok. */
+	hosts = optpool_find_by_key(opts, "Hosts");
+	if (unlikely(!hosts)) {
+		error("Missing 'Hosts' option.");
+		die();	/* Impossible anyway. Checked in 
+			 * _check_important_options() in
+			 * main.c
+			 */
+	}
 
-	err = array_of_str_dup(self->alloc, nhosts, hosts, (char ***)&self->hosts);
-	if (unlikely(err))
+	self->nhosts = _count_hosts(hosts);
+	if (self->nhosts < 0) {
+		fcallerror("_count_hosts", self->nhosts);
+		return -EINVAL;
+	}
+	if (self->nhosts == 0) {
+		error("Number of hosts is zero.");
+		return -EINVAL;
+	}
+
+	err = ZALLOC(self->alloc, (void **)&self->hosts, self->nhosts,
+	             sizeof(char *), "host list");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
 		return err;
+	}
 
-	self->nhosts = nhosts;
+	j = 0;
+	for (i = 0; i < self->nhosts; ++i) {
+		if (0 != hosts[j])
+			++j;
+		j += _copy_up_to_char(hosts + j, host, sizeof(host), ',');
+
+		err = xstrdup(self->alloc, host, &self->hosts[i]);
+		if (unlikely(err)) {
+			fcallerror("xstdrup", err);
+			goto fail;
+		}
+	}
 
 	return 0;
+
+fail:
+	tmp = ZFREE(self->alloc, (void **)&self->hosts, self->nhosts,
+                    sizeof(char *), "");
+	if (unlikely(tmp))
+		fcallerror("ZFREE", tmp);
+
+	return err;
+}
+
+static int _count_hosts(const char *hosts)
+{
+	int i, n;
+	char host[64];
+
+	n = i = 0;
+	while (hosts[i]) {
+		if (0 != hosts[i])
+			++i;
+		i += _copy_up_to_char(hosts + i, host, sizeof(host), ',');
+
+		if (0 == strlen(host)) {
+			error("Invalid host in host list at position %d.", n);
+			return -EINVAL;
+		}
+
+		++n;
+	}
+
+	return n;
+}
+
+static int _copy_up_to_char(const char *istr, char *ostr, int len, char x)
+{
+	int i, j;
+
+	i = j = 0;
+	while ((0 != istr[i]) && (x != istr[i]) && (j < len - 1))
+		ostr[j++] = istr[i++];
+	ostr[j] = 0;
+
+	return i;
 }
 
 static int _free_hosts(struct spawn* self)
