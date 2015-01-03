@@ -16,7 +16,6 @@ static struct kvpair *_find_option_by_key(struct optpool *self,
                                           const char *key);
 static struct kvpair *_find_option_by_key_v2(struct optpool *self,
                                              const char *key, ll len);
-static ll _length_list(struct optpool *self);
 static int _find_equal_sign(const char *string);
 
 
@@ -167,7 +166,7 @@ int optpool_buffer_pack(struct optpool *self, struct buffer *buffer)
 	struct list *p;
 	struct kvpair *opt;
 
-	len = _length_list(self);
+	len = list_length(&self->opts);
 
 	err = buffer_pack_ui64(buffer, &len, 1);
 	if (unlikely(err))
@@ -319,19 +318,6 @@ static struct kvpair *_find_option_by_key_v2(struct optpool *self,
 	}
 
 	return NULL;
-}
-
-static ll _length_list(struct optpool *self)
-{
-	struct list *p;
-	ll len;
-
-	len = 0;
-	LIST_FOREACH(p, &self->opts) {
-		++len;
-	}
-
-	return len;
 }
 
 static int _find_equal_sign(const char *string)
