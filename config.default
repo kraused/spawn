@@ -1,0 +1,6 @@
+# Default configuration values for the spawn utility
+ 
+# For testing we use the local.so plugin with its
+# limited functionality
+ExecPlugin=SPAWN_INSTALL_PREFIX/lib/local.so
+

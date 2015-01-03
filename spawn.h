@@ -9,6 +9,7 @@
 #include "pack.h"
 #include "list.h"
 #include "worker.h"
+#include "options.h"
 
 struct sockaddr;
 
@@ -23,6 +24,8 @@ struct exec_plugin;
 struct spawn
 {
 	struct alloc		*alloc;
+
+	struct optpool		opts;
 
 	/* Number of hosts. This number includes the host on which the
 	 * spawn program itself is running.

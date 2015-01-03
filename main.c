@@ -58,6 +58,7 @@ static int _localaddr(struct sockaddr_in *sa);
 static int _parse_argv_on_other(int argc, char **argv, struct _args_other *args);
 static int _redirect_stdio();
 static int _connect_to_parent(struct spawn *spawn, struct sockaddr_in *sa);
+static int _fill_optpool(struct optpool *opts, char **argv);
 
 
 int main(int argc, char **argv)
@@ -107,6 +108,7 @@ static int _main_on_local(int argc, char **argv)
 	struct spawn spawn;
 	struct sockaddr_in sa;
 	struct job *job;
+	const char *path;
 
 	alloc = libc_allocator_with_debugging();
 
@@ -116,7 +118,9 @@ static int _main_on_local(int argc, char **argv)
 		return err;
 	}
 
-	/* FIXME parse command line arguments */
+	err = _fill_optpool(&spawn.opts, argv);
+	if (unlikely(err))
+		return err;
 
 	err = spawn_setup_on_local(&spawn, devel_nhosts, devel_hostlist, devel_tree_width);
 	if (unlikely(err)) {
@@ -124,7 +128,13 @@ static int _main_on_local(int argc, char **argv)
 		return err;
 	}
 
-	err = spawn_setup_worker_pool(&spawn, EXEC_PLUGIN);
+	path = optpool_find_by_key(&spawn.opts, "ExecPlugin");
+	if (unlikely(!path)) {
+		error("Missing 'ExecPlugin' option.");
+		return -EINVAL;
+	}
+
+	err = spawn_setup_worker_pool(&spawn, path);
 	if (unlikely(err))
 		return err;
 
@@ -411,5 +421,37 @@ fail:
 	close(fd);
 
 	return err;
+}
+
+static int _fill_optpool(struct optpool *opts, char **argv)
+{
+	int err;
+	FILE *fp;
+
+	fp = fopen(SPAWN_CONFIG_DEFAULT, "r");
+	if (unlikely(!fp)) {
+		error("Failed to open configuration file '%s'.", SPAWN_CONFIG_DEFAULT);
+		return -ESOMEFAULT;
+	}
+
+	err = optpool_parse_file(opts, fp);
+	if (unlikely(err)) {
+		error("Failed to parse the configuration file '%s' " \
+		      "(optpool_parse_cmdline_args failed with error %d)", 
+		      SPAWN_CONFIG_DEFAULT, err);
+		fclose(fp);
+		return err;
+	}
+
+	fclose(fp);
+
+	err = optpool_parse_cmdline_args(opts, argv);
+	if (unlikely(err)) {
+		error("Failed to parse the command line arguments " \
+		      "(optpool_parse_cmdline_args failed with error %d)", err);
+		return err;
+	}
+
+	return 0;
 }
 

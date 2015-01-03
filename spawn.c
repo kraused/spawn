@@ -42,6 +42,12 @@ int spawn_ctor(struct spawn *self, struct alloc *alloc)
 
 	self->alloc = alloc;
 
+	err = optpool_ctor(&self->opts, self->alloc);
+	if (unlikely(err)) {
+		error("struct optpool constructor failed with error %d.", err);
+		return err;
+	}
+
 	err = network_ctor(&self->tree, self->alloc);
 	if (unlikely(err)) {
 		error("struct network constructor failed with error %d.", err);
@@ -94,6 +100,12 @@ int spawn_dtor(struct spawn *self)
 	err = network_dtor(&self->tree);
 	if (unlikely(err)) {
 		error("struct network destructor failed with error %d.", err);
+		return err;
+	}
+
+	err = optpool_dtor(&self->opts);
+	if (unlikely(err)) {
+		error("struct optpool destructor failed with error %d.", err);
 		return err;
 	}
 

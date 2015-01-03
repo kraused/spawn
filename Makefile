@@ -8,7 +8,7 @@ CFLAGS   = -O0 -ggdb -Wall -std=gnu11 -fPIC
 # plugins can resolve symbols from the executable.
 LDFLAGS  = -Wl,--export-dynamic -ldl -lpthread
 
-OBJ      = main.o loop.o plugin.o spawn.o job.o pack.o protocol.o error.o helper.o queue.o comm.o thread.o network.o alloc.o watchdog.o worker.o task.o
+OBJ      = main.o loop.o plugin.o spawn.o job.o pack.o protocol.o error.o helper.o queue.o comm.o thread.o network.o alloc.o watchdog.o worker.o task.o options.o
 SO       = plugins/local.so plugins/ssh.so plugins/hello.so
 
 default: spawn.exe $(SO)
@@ -26,15 +26,19 @@ spawn.exe: $(OBJ)
 install:
 	rm -rf $(PREFIX)
 	#
-	install -d -m755 $(PREFIX)
-	install -d -m755 $(PREFIX)/bin
-	install -d -m755 $(PREFIX)/lib
-	install -d -m755 $(PREFIX)/libexec
+	install -d -m 755 $(PREFIX)
+	install -d -m 755 $(PREFIX)/bin
+	install -d -m 755 $(PREFIX)/lib
+	install -d -m 755 $(PREFIX)/libexec
+	install -d -m 755 $(PREFIX)/etc
 	#
 	install -m 755 spawn.exe $(PREFIX)/libexec/spawn
 	ln -s $(PREFIX)/libexec/spawn $(PREFIX)/bin
 	#
 	install -m 755 plugins/{ssh,local,hello}.so $(PREFIX)/lib
+	#
+	sed -e 's+SPAWN_INSTALL_PREFIX+$(PREFIX)+g' config.default > $(PREFIX)/etc/config.default 
+	chmod 444 $(PREFIX)/etc/config.default
 
 clean:
 	rm -f spawn.exe
