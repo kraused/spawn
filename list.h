@@ -84,5 +84,18 @@ static inline void list_remove(struct list *self)
 #define LIST_FOREACH_S(p, tmp, head)	\
 	for ((p) = (head)->next, (tmp) = (p)->next; (p) != (head); (p) = (tmp), (tmp) = (p)->next)
 
+/*
+ * Get the length of the list.
+ */
+ll list_length(struct list *self);
+
+/*
+ * Check if the list is empty.
+ */
+static inline int list_is_empty(struct list *self)
+{
+	return (self->next == self);
+}
+
 #endif
 
