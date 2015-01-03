@@ -6,6 +6,8 @@
 
 #include "list.h"
 
+struct buffer;
+
 /*
  * Options are key value pairs organized in
  * a linked list.
@@ -53,6 +55,19 @@ int optpool_parse_file(struct optpool *self, FILE *fp);
  * matching option is found.
  */
 const char *optpool_find_by_key(struct optpool *self, const char *key);
+
+/*
+ * Find an option by the key and return the value (converted to an int)
+ * in result. The function returns zero in case of success.
+ */
+int optpool_find_by_key_as_int(struct optpool *self,
+                               const char *key, int *result);
+
+/*
+ * Serialize and de-serialize a struct optpool.
+ */
+int optpool_buffer_pack(struct optpool *self, struct buffer *buffer);
+int optpool_buffer_unpack(struct optpool *self, struct buffer *buffer);
 
 #endif
 
