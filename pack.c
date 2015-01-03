@@ -254,7 +254,7 @@ int buffer_unpack_string(struct buffer *self, struct alloc *alloc, char **str)
 		err = ZALLOC(alloc, (void **)str, len, sizeof(char), "string");
 		if (unlikely(err)) {
 			fcallerror("ZALLOC", err);
-			goto fail;
+			return err;
 		}
 
 		err = buffer_unpack_si8(self, (si8* )*str, len);
@@ -315,16 +315,8 @@ int buffer_unpack_array_of_str(struct buffer *self, struct alloc *alloc,
 	return 0;
 
 fail:
-	for (i = 0; i < (*n); ++i) {
-		if (unlikely(!(*str)[i]))
-			continue;
-
-		tmp = ZFREE(alloc, (void **)&(*str)[i],
-		            strlen((*str)[i]) + 1,
-		            sizeof(char), "");
-		if (unlikely(tmp))
-			fcallerror("ZFREE", tmp);
-	}
+	for (i = 0; i < (*n); ++i)
+		strfree(alloc, &(*str)[i]);
 
 	tmp = ZFREE(alloc, (void **)str, (*n), sizeof(char *), "");
 	if (unlikely(tmp))

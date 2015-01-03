@@ -603,7 +603,8 @@ static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
 		goto fail1;
 	}
 
-	err = array_of_str_dup(wkpool->alloc, msg->argc, (const char **)msg->argv, &(*wkitem)->argv);
+	err = array_of_str_dup(wkpool->alloc, (msg->argc + 1), 
+	                       (const char **)msg->argv, &(*wkitem)->argv);
 	if (unlikely(err)) {
 		fcallerror("array_of_str_dup", err);
 		goto fail2;
@@ -614,10 +615,7 @@ static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
 fail2:
 	assert(err);
 
-	tmp = ZFREE(wkpool->alloc, (void **)&(*wkitem)->host,
-	            strlen((*wkitem)->host) + 1, sizeof(char), "");
-	if (unlikely(tmp))
-		fcallerror("ZFREE", tmp);
+	strfree(wkpool->alloc, (char **)&(*wkitem)->host);
 
 fail1:
 	assert(err);

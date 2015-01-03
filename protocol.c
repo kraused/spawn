@@ -547,6 +547,8 @@ static int _unpack_message_request_exec(struct buffer *buffer,
 	if (unlikely(err))
 		return err;
 
+	--msg->argc;	/* argv has always size argc + 1 with argv[argc] == NULL. */
+
 	return 0;
 }
 
@@ -554,32 +556,14 @@ static int _free_message_request_exec(struct alloc *alloc,
                                       const struct message_request_exec *msg)
 {
 	int err;
-	int i;
+	
+	err = array_of_str_free(alloc, (msg->argc + 1), (char ***)&msg->argv);
+	if (unlikely(err))
+		return err;	/* array_of_str_free() reports reason. */
 
-	for (i = 0; i < (int )msg->argc; ++i) {
-		if (!msg->argv[i])
-			continue;
-
-		err = ZFREE(alloc, (void **)&msg->argv[i],
-		            strlen(msg->argv[i]) + 1,
-		            sizeof(char), "");
-		if (unlikely(err)) {
-			fcallerror("ZFREE", err);
-			return err;
-		}
-	}
-
-	err = ZFREE(alloc, (void **)&msg->argv, msg->argc, sizeof(char *), "");
-	if (unlikely(err)) {
-		fcallerror("ZFREE", err);
+	err = strfree(alloc, (char **)&msg->host);
+	if (unlikely(err))
 		return err;
-	}
-
-	err = ZFREE(alloc, (void **)&msg->host, strlen(msg->host) + 1, sizeof(char), "");
-	if (unlikely(err)) {
-		fcallerror("ZFREE", err);
-		return err;
-	}
 
 	return 0;
 }
@@ -613,23 +597,10 @@ static int _free_message_request_build_tree(struct alloc *alloc,
                                             const struct message_request_build_tree *msg)
 {
 	int err;
-	int i;
 
-	for (i = 0; i < (int )msg->nhosts; ++i) {
-		err = ZFREE(alloc, (void **)&msg->hosts[i],
-		            strlen(msg->hosts[i]) + 1,
-		            sizeof(char), "");
-		if (unlikely(err)) {
-			fcallerror("ZFREE", err);
-			return err;
-		}
-	}
-
-	err = ZFREE(alloc, (void **)&msg->hosts, msg->nhosts, sizeof(char *), "");
-	if (unlikely(err)) {
-		fcallerror("ZFREE", err);
-		return err;
-	}
+	err = array_of_str_free(alloc, msg->nhosts, (char ***)&msg->hosts);
+	if (unlikely(err))
+		return err;	/* array_of_str_free() reports reason. */
 
 	return 0;
 }
@@ -702,11 +673,9 @@ static int _free_message_request_task(struct alloc *alloc,
 {
 	int err;
 
-	err = ZFREE(alloc, (void **)&msg->path, strlen(msg->path) + 1, sizeof(char), "");
-	if (unlikely(err)) {
-		fcallerror("ZFREE", err);
-		return err;
-	}
+	err = strfree(alloc, (char **)&msg->path);
+	if (unlikely(err))
+		return err;	/* strfree() will report problem. */
 
 	return 0;
 }

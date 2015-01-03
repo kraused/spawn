@@ -314,26 +314,12 @@ static int _free_exec_work_item(struct exec_worker_pool *self,
                                 struct exec_work_item **wkitem)
 {
 	int err;
-	int i;
 
-	for (i = 0; i < (*wkitem)->argc; ++i) {
-		if (!(*wkitem)->argv[i])
-			continue;
-
-		err = ZFREE(self->alloc, (void **)&(*wkitem)->argv[i],
-		            strlen((*wkitem)->argv[i]) + 1, sizeof(char), "");
-		if (unlikely(err)) {
-			fcallerror("ZFREE", err);
-			return err;	/* Introduces a leak. */
-		}
-	}
-
-	err = ZFREE(self->alloc, (void **)&(*wkitem)->argv,
-	            (*wkitem)->argc, sizeof(char *), "");
-	if (unlikely(err)) {
-		fcallerror("ZFREE", err);
-		return err;     /* Introduces a leak. */
-	}
+	err = array_of_str_free(self->alloc, 
+	                        ((*wkitem)->argc + 1), 
+	                        &(*wkitem)->argv);
+	if (unlikely(err))
+		return err;
 
 	err = ZFREE(self->alloc, (void **)wkitem, 1,
 	            sizeof(struct exec_work_item), "");
