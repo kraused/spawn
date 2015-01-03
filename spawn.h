@@ -27,9 +27,6 @@ struct spawn
 
 	struct optpool		*opts;
 
-	int			treewidth;
-	int			fanout;
-
 	/* Number of hosts. This number includes the host on which the
 	 * spawn program itself is running.
 	 */
@@ -75,7 +72,7 @@ int spawn_dtor(struct spawn *self);
  */
 int spawn_setup_on_local(struct spawn *self,
                          struct optpool *opts, int nhosts,
-                         const char **hosts, int treewidth);
+                         const char **hosts);
 
 /*
  * Setup the spawn instance on all other hosts.

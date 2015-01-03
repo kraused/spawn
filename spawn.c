@@ -141,11 +141,11 @@ int spawn_dtor(struct spawn *self)
 
 int spawn_setup_on_local(struct spawn *self,
                          struct optpool *opts, int nhosts,
-                         const char **hosts, int treewidth)
+                         const char **hosts)
 {
 	int err;
 
-	if (unlikely((nhosts < 0) || !hosts || (treewidth < 0)))
+	if (unlikely((nhosts < 0) || !hosts))
 		return -EINVAL;
 
 	self->parent = -1;

@@ -128,6 +128,15 @@ static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc
 {
 	int err, tmp;
 	int i, quot;
+	int treewidth;
+
+	err = optpool_find_by_key_as_int(spawn->opts, "TreeWidth", &treewidth);
+	if (unlikely(err)) {
+		fcallerror("optpool_find_by_key_as_int", &err);
+		die();	/* Very unlikely
+			 */
+	}
+
 
 	self->job.alloc = alloc;
 	self->job.type  = JOB_TYPE_BUILD_TREE;
@@ -154,8 +163,10 @@ static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc
 		}
 	}
 
-	self->nchildren = MIN(devel_tree_width, self->nhosts);
+	self->nchildren = MIN(treewidth, self->nhosts);
 	quot = self->nhosts/self->nchildren;
+
+	log("# children = %d", self->nchildren);
 
 	err = ZALLOC(alloc, (void **)&self->children, self->nchildren,
 	             sizeof(struct _job_build_tree_child), "children");

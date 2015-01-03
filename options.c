@@ -218,6 +218,9 @@ int optpool_buffer_unpack(struct optpool *self, struct buffer *buffer)
 		if (unlikely(i < 0))
 			return i;
 
+		opt->key[i] = 0;
+		opt->val    = opt->key + (i + 1);
+
 		list_insert_before(&self->opts, &opt->list);
 	}
 

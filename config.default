@@ -9,3 +9,6 @@ ExecFanout=4
 # worker threads.
 ExecQueueCapacity=128
 
+# Default tree width
+TreeWidth=32
+

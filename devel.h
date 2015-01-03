@@ -29,17 +29,5 @@ static const char *devel_hostlist[] = {
 };
 static const int devel_nhosts = sizeof(devel_hostlist)/sizeof(devel_hostlist[0]);
 
-/*
- * The tree width is read from the command line.
- *
- * -o TreeWidth=3
- */
-static const int devel_tree_width = 3;
-
-/*
- * For testing: A simple task plugin
- */
-#define TASK_PLUGIN SPAWN_INSTALL_PREFIX "/lib/hello.so"
-
 #endif
 

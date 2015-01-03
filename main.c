@@ -134,7 +134,7 @@ static int _main_on_local(int argc, char **argv)
 	if (unlikely(err))
 		return err;
 
-	err = spawn_setup_on_local(&spawn, opts, devel_nhosts, devel_hostlist, devel_tree_width);
+	err = spawn_setup_on_local(&spawn, opts, devel_nhosts, devel_hostlist);
 	if (unlikely(err)) {
 		error("Failed to setup spawn instance.");
 		return err;
