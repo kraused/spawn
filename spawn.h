@@ -112,6 +112,11 @@ int spawn_comm_halt(struct spawn *self);
 int spawn_comm_flush(struct spawn *self);
 
 /*
+ * Reserve a virtual channel for a plugin.
+ */
+int spawn_comm_resv_channel(struct spawn *self, ui16 *channel);
+
+/*
  * Send a message.
  */
 int spawn_send_message(struct spawn *self, struct message_header *header, void *msg);

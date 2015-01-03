@@ -88,6 +88,8 @@ struct comm
 	 */
 	struct buffer		*bcastb;
 	int			bcastp;
+
+	ui16			channel;
 };
 
 /*
@@ -155,6 +157,11 @@ int comm_dequeue_would_succeed(struct comm *self, int *result);
  * and all packages are routed.
  */
 int comm_flush(struct comm *self);
+
+/*
+ * Reserve a virtual channel.
+ */
+int comm_resv_channel(struct comm *self, ui16 *channel);
 
 #endif
 

@@ -90,6 +90,10 @@ int comm_ctor(struct comm *self, struct alloc *alloc,
 		goto fail2;
 	}
 
+	/* Reserve channel zero for the spawn executable.
+	 */
+	self->channel = 1;
+
 	return 0;
 
 fail2:
@@ -228,6 +232,17 @@ int comm_flush(struct comm *self)
 	ts.tv_sec  = 3;
 	ts.tv_nsec = 0;
 	nanosleep(&ts, NULL);
+
+	return 0;
+}
+
+int comm_resv_channel(struct comm *self, ui16 *channel)
+{
+	if (self->channel >= 1023)
+		return -ENOMEM;
+
+	*channel = self->channel;
+	self->channel++;
 
 	return 0;
 }

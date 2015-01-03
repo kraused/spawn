@@ -301,6 +301,19 @@ int spawn_comm_flush(struct spawn *self)
 	return 0;
 }
 
+int spawn_comm_resv_channel(struct spawn *self, ui16 *channel)
+{
+	int err;
+
+	err = comm_resv_channel(&self->comm, channel);
+	if (unlikely(err)) {
+		fcallerror("comm_resv_channel", err);
+		return err;
+	}
+
+	return 0;
+}
+
 int spawn_send_message(struct spawn *self, struct message_header *header, void *msg)
 {
 	struct buffer *buffer;
