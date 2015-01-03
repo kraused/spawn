@@ -45,11 +45,19 @@ static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
 static int _handle_request_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_response_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_request_task(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum);
 static int _fix_lft(struct spawn *spawn, int port, int dest);
 static int _peeraddr(int fd, ui32 *ip, ui32 *portnum);
 static int _declare_child_alive(struct job_build_tree *job, int id);
 static int _declare_child_ready(struct job_build_tree *job, int id);
+static void _sighandler(int signum);
+static int _install_sighandler();
+static int _quit(struct spawn *spawn);
+static int _send_exit(struct spawn *spawn);
+
+static int _finished = 0;
+static int _sigrecvd = 0;
 
 
 int loop(struct spawn *spawn)
@@ -59,10 +67,22 @@ int loop(struct spawn *spawn)
 	struct buffer *buffer;
 	struct timespec ts;
 
+	err = _install_sighandler();
+	if (unlikely(err)) {
+		fcallerror("_install_sighandler", err);
+		die();
+	}
+
 	_ping(spawn, 60);	/* First time nothing is send. */
 
 	while (1) {
-		/* FIXME Handle signals - At least on the master */
+		if (1 == _finished) {
+			err = _quit(spawn);
+			if(unlikely(err))
+				fcallerror("_quit", err);
+		}
+		if (_finished)
+			break;
 
 		err = _handle_jobs(spawn);
 		if (unlikely(err))
@@ -125,6 +145,14 @@ int loop(struct spawn *spawn)
 				die();	/* FIXME */
 			}
 		}
+
+		/* FIXME
+		 * Check tasks for termination
+		 */
+
+		/* FIXME
+		 * Terminate if there are no jobs left and no tasks running.
+		 */
 	}
 
 	return 0;
@@ -284,6 +312,9 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 		break;
 	case MESSAGE_TYPE_REQUEST_TASK:
 		err = _handle_request_task(spawn, &header, buffer);
+		break;
+	case MESSAGE_TYPE_EXIT:
+		err = _handle_exit(spawn, &header, buffer);
 		break;
 	default:
 		error("Dropping unexpected message of type %d from %d.", header.type, header.src);
@@ -723,6 +754,15 @@ fail:
 	return err;
 }
 
+static int _handle_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	_finished = 2;
+
+	debug("Received exit message.");
+
+	return 0;
+}
+
 static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum)
 {
 	int i;
@@ -858,6 +898,65 @@ static int _declare_child_ready(struct job_build_tree *job, int id)
 	if (unlikely(!ok)) {
 		error("Found no matching children with id %d.", id);
 		return -ESOMEFAULT;
+	}
+
+	return 0;
+}
+
+static void _sighandler(int signum)
+{
+	_finished = 1;
+	_sigrecvd = signum;
+}
+
+static int _install_sighandler()
+{
+	if (SIG_ERR == signal(SIGQUIT, _sighandler))
+		return -errno;
+	if (SIG_ERR == signal(SIGINT , _sighandler))
+		return -errno;
+	if (SIG_ERR == signal(SIGTERM, _sighandler))
+		return -errno;
+
+	return 0;
+}
+
+static int _quit(struct spawn *spawn)
+{
+	int err;
+
+	err = _send_exit(spawn);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _send_exit(struct spawn *spawn)
+{
+	int err;
+	struct message_header   header;
+	struct message_exit 	msg;
+
+	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
+
+	header.src   = spawn->tree.here;	/* Always the same */
+	header.flags = MESSAGE_FLAG_BCAST;
+	header.type  = MESSAGE_TYPE_EXIT;
+
+	debug("Sending exit message.");
+
+	err = spawn_send_message(spawn, &header, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("spawn_send_message", err);
+		return err;
+	}
+
+	err = spawn_comm_flush_sendq(spawn);
+	if (unlikely(err)) {
+		fcallerror("spawn_comm_flush", err);
+		return err;
 	}
 
 	return 0;

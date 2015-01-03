@@ -100,6 +100,11 @@ int spawn_comm_start(struct spawn *self);
 int spawn_comm_halt(struct spawn *self);
 
 /*
+ * Flush the communication queue.
+ */
+int spawn_comm_flush_sendq(struct spawn *self);
+
+/*
  * Send a message.
  */
 int spawn_send_message(struct spawn *self, struct message_header *header, void *msg);

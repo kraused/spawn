@@ -73,7 +73,11 @@ int spawn_dtor(struct spawn *self)
 {
 	int err;
 
-	/* FIXME Check that list of jobs is empty */
+	/* FIXME Check that the list of jobs is empty
+	 */
+	/* FIXME Check that the list of tasks is either empty or cancel all running
+	 *       tasks and free the list.
+	 */
 
 	err = comm_dtor(&self->comm);
 	if (unlikely(err)) {
@@ -243,6 +247,19 @@ int spawn_comm_halt(struct spawn *self)
 	err = _tree_close_listenfd(&self->tree);
 	if (unlikely(err))
 		return err;
+
+	return 0;
+}
+
+int spawn_comm_flush_sendq(struct spawn *self)
+{
+	int err;
+
+	err = comm_flush_sendq(&self->comm);
+	if (unlikely(err)) {
+		fcallerror("comm_flush_sendq", err);
+		return err;
+	}
 
 	return 0;
 }

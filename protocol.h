@@ -26,7 +26,8 @@ enum
 	MESSAGE_TYPE_REQUEST_EXEC,
 	MESSAGE_TYPE_REQUEST_BUILD_TREE,
 	MESSAGE_TYPE_RESPONSE_BUILD_TREE,
-	MESSAGE_TYPE_REQUEST_TASK
+	MESSAGE_TYPE_REQUEST_TASK,
+	MESSAGE_TYPE_EXIT,
 };
 
 /*
@@ -105,6 +106,11 @@ struct message_request_task
 {
 	const char	*path;
 	ui32		channel;
+};
+
+struct message_exit
+{
+	ui32	signum;
 };
 
 /*

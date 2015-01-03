@@ -150,5 +150,10 @@ int comm_dequeue(struct comm *self, struct buffer **buffer);
  */
 int comm_dequeue_would_succeed(struct comm *self, int *result);
 
+/*
+ * Flush the communication queue.
+ */
+int comm_flush_sendq(struct comm *self);
+
 #endif
 

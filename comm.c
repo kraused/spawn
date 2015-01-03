@@ -202,6 +202,36 @@ int comm_dequeue_would_succeed(struct comm *self, int *result)
 	return err;
 }
 
+int comm_flush_sendq(struct comm *self)
+{
+	int err;
+	ll size;
+	struct timespec ts;
+
+	while (1) {
+		err = _comm_queue_size(&self->sendq, &size);
+		if (unlikely(err)) {
+			fcallerror("_comm_queue_size", err);
+			continue;
+		}
+		if (0 == size)
+			break;
+
+		ts.tv_nsec = 1;
+		ts.tv_sec  = 0;
+		nanosleep(&ts, NULL);
+	}
+
+	/* FIXME Loop over the send buffers to make sure that
+	 *       all messages have been send.
+	 */
+	ts.tv_nsec = 3;
+	ts.tv_sec  = 0;
+	nanosleep(&ts, NULL);
+
+	return 0;
+}
+
 
 static int _comm_thread(void *arg)
 {
