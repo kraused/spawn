@@ -4,9 +4,9 @@
 
 #include "ints.h"
 
-
 struct alloc;
 struct buffer;
+struct optpool;
 
 
 /*
@@ -75,8 +75,9 @@ struct message_request_join
 
 struct message_response_join
 {
-	ui32	addr;	/* Already given to process on command line. Given again for
-			 * double checking. */
+	ui32		addr;	/* Already given to process on command line.
+				 * Given again for double checking. */
+	struct optpool	*opts;
 };
 
 struct message_ping

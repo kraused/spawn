@@ -37,15 +37,6 @@ static const int devel_nhosts = sizeof(devel_hostlist)/sizeof(devel_hostlist[0])
 static const int devel_tree_width = 3;
 
 /*
- * Fanout width. This parameter specifies how many processes are spawned in parallel. Note
- * that even for verly large fanout settings processes are still spawned in groups during the
- * construction of the tree from the group up.
- *
- * -o Fanout=128
- */
-static const int devel_fanout = 2;
-
-/*
  * For testing: A simple task plugin
  */
 #define TASK_PLUGIN SPAWN_INSTALL_PREFIX "/lib/hello.so"

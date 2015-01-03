@@ -468,6 +468,9 @@ static int _handle_response_join(struct spawn *spawn, struct message_header *hea
 		die();  /* Makes no sense to continue. */
 	}
 
+	spawn->opts = msg.opts;
+	msg.opts    = NULL;
+
 	matches = 0;
 
 	LIST_FOREACH(p, &spawn->jobs) {
@@ -516,12 +519,15 @@ static int _send_response_join(struct spawn *spawn, int dest)
 	header.type  = MESSAGE_TYPE_RESPONSE_JOIN;
 
 	msg.addr = dest;
+	msg.opts = spawn->opts;
 
 	err = spawn_send_message(spawn, &header, (void *)&msg);
 	if (unlikely(err)) {
 		fcallerror("spawn_send_message", err);
 		return err;
 	}
+
+	msg.opts = NULL;
 
 	return 0;
 }
@@ -603,7 +609,7 @@ static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
 		goto fail1;
 	}
 
-	err = array_of_str_dup(wkpool->alloc, (msg->argc + 1), 
+	err = array_of_str_dup(wkpool->alloc, (msg->argc + 1),
 	                       (const char **)msg->argv, &(*wkitem)->argv);
 	if (unlikely(err)) {
 		fcallerror("array_of_str_dup", err);

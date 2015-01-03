@@ -3,4 +3,9 @@
 # For testing we use the local.so plugin with its
 # limited functionality
 ExecPlugin=SPAWN_INSTALL_PREFIX/lib/local.so
+# Default fanout (number of threads used to spawn processes)
+ExecFanout=4
+# Capacity of the queue holding the work for the exec
+# worker threads.
+ExecQueueCapacity=128
 

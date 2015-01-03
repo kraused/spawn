@@ -20,6 +20,7 @@
 #include "plugin.h"
 #include "helper.h"
 #include "protocol.h"
+#include "options.h"
 
 #include "devel.h"
 
@@ -42,11 +43,11 @@ int spawn_ctor(struct spawn *self, struct alloc *alloc)
 
 	self->alloc = alloc;
 
-	err = optpool_ctor(&self->opts, self->alloc);
-	if (unlikely(err)) {
-		error("struct optpool constructor failed with error %d.", err);
-		return err;
-	}
+	/* Do not allocate and initialize the opts member here. In the context of the master
+	 * process the main function will allocate it (since we need to have the configuration
+	 * parameters available early in the program). In the context of the other processes
+	 * the structure is allocated when the RESPONSE_JOIN message arrives.
+	 */
 
 	err = network_ctor(&self->tree, self->alloc);
 	if (unlikely(err)) {
@@ -103,10 +104,19 @@ int spawn_dtor(struct spawn *self)
 		return err;
 	}
 
-	err = optpool_dtor(&self->opts);
-	if (unlikely(err)) {
-		error("struct optpool destructor failed with error %d.", err);
-		return err;
+	if (self->opts) {
+		err = optpool_dtor(self->opts);
+		if (unlikely(err)) {
+			error("struct optpool destructor failed with error %d.", err);
+			return err;
+		}
+
+		err = ZFREE(self->alloc, (void **)&self->opts, 1,
+		            sizeof(struct optpool), "opts");
+		if (unlikely(err)) {
+			fcallerror("ZFREE", err);
+			return err;
+		}
 	}
 
 	if (self->wkpool) {
@@ -129,7 +139,8 @@ int spawn_dtor(struct spawn *self)
 	return 0;
 }
 
-int spawn_setup_on_local(struct spawn *self, int nhosts,
+int spawn_setup_on_local(struct spawn *self,
+                         struct optpool *opts, int nhosts,
                          const char **hosts, int treewidth)
 {
 	int err;
@@ -138,6 +149,7 @@ int spawn_setup_on_local(struct spawn *self, int nhosts,
 		return -EINVAL;
 
 	self->parent = -1;
+	self->opts   = opts;
 
 	err = _copy_hosts(self, nhosts, hosts);
 	if (unlikely(err))
@@ -179,6 +191,7 @@ int spawn_setup_worker_pool(struct spawn *self, const char *path)
 {
 	struct plugin *plu;
 	int err, tmp;
+	int fanout, cap;
 
 	if (unlikely(self->exec)) {
 		warn("self->exec is not NULL. This may cause a memory leak.");
@@ -204,9 +217,21 @@ int spawn_setup_worker_pool(struct spawn *self, const char *path)
 		return err;
 	}
 
+	err = optpool_find_by_key_as_int(self->opts, "ExecFanout", &fanout);
+	if (unlikely(err)) {
+		fcallerror("optpool_find_by_key_as_int", err);
+		die();	/* Should not happen since we have default values
+			 * in place. */
+	}
+
+	err = optpool_find_by_key_as_int(self->opts, "ExecQueueCapacity", &cap);
+	if (unlikely(err)) {
+		fcallerror("optpool_find_by_key_as_int", err);
+		die();
+	}
+
 	err = exec_worker_pool_ctor(self->wkpool, self->alloc,
-	                            devel_fanout, 32*devel_fanout,	/* FIXME capacity */
-	                            self->exec);
+	                            fanout, cap, self->exec);
 	if (unlikely(err)) {
 		fcallerror("exec_worker_pool_ctor", err);
 		goto fail;

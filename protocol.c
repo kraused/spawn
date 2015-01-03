@@ -9,6 +9,7 @@
 #include "alloc.h"
 #include "protocol.h"
 #include "pack.h"
+#include "options.h"
 
 
 static int _pack_message_something(struct buffer *buffer, int type, void *msg);
@@ -25,6 +26,7 @@ static int _free_message_request_join(struct alloc *alloc,
 static int _pack_message_response_join(struct buffer *buffer,
                                        const struct message_response_join *msg);
 static int _unpack_message_response_join(struct buffer *buffer,
+                                         struct alloc *alloc,
                                          struct message_response_join *msg);
 static int _free_message_response_join(struct alloc *alloc,
                                        const struct message_response_join *msg);
@@ -321,7 +323,7 @@ static int _unpack_message_something(struct buffer *buffer, struct alloc *alloc,
 		                    (struct message_request_join *)msg);
 		break;
 	case MESSAGE_TYPE_RESPONSE_JOIN:
-		err = _unpack_message_response_join(buffer,
+		err = _unpack_message_response_join(buffer, alloc,
 		                    (struct message_response_join *)msg);
 		break;
 	case MESSAGE_TYPE_PING:
@@ -460,10 +462,17 @@ static int _pack_message_response_join(struct buffer *buffer,
 	if (unlikely(err))
 		return err;
 
+	err = optpool_buffer_pack(msg->opts, buffer);
+	if (unlikely(err)) {
+		fcallerror("optpool_buffer_pack", err);
+		return err;
+	}
+
 	return 0;
 }
 
 static int _unpack_message_response_join(struct buffer *buffer,
+                                         struct alloc *alloc,
                                          struct message_response_join *msg)
 {
 	int err;
@@ -472,12 +481,40 @@ static int _unpack_message_response_join(struct buffer *buffer,
 	if (unlikely(err))
 		return err;
 
+	err = ZALLOC(alloc, (void **)&msg->opts, 1,
+	             sizeof(struct optpool), "opts");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		return err;
+	}
+
+	err = optpool_ctor(msg->opts, alloc);
+	if (unlikely(err)) {
+		fcallerror("optpool_ctor", err);
+		return err;
+	}
+
+	err = optpool_buffer_unpack(msg->opts, buffer);
+	if (unlikely(err)) {
+		fcallerror("optpool_buffer_unpack", err);
+		return err;
+	}
+
 	return 0;
 }
 
 static int _free_message_response_join(struct alloc *alloc,
                                        const struct message_response_join *msg)
 {
+	/* Since struct optpool can be quite heavy it would be a waste of resources
+	 * to duplicate it. Instead the pointer should be copied and set to zero.
+	 *
+	 * WARNING This means that the correct allocator needs to be passed to
+	 *         the unpack routine.
+	 */
+	if (NULL != msg->opts)
+		warn("msg->opts should be NULL. This may result in a memory leak.");
+
 	return 0;
 }
 
@@ -556,7 +593,7 @@ static int _free_message_request_exec(struct alloc *alloc,
                                       const struct message_request_exec *msg)
 {
 	int err;
-	
+
 	err = array_of_str_free(alloc, (msg->argc + 1), (char ***)&msg->argv);
 	if (unlikely(err))
 		return err;	/* array_of_str_free() reports reason. */

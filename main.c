@@ -58,7 +58,8 @@ static int _localaddr(struct sockaddr_in *sa);
 static int _parse_argv_on_other(int argc, char **argv, struct _args_other *args);
 static int _redirect_stdio();
 static int _connect_to_parent(struct spawn *spawn, struct sockaddr_in *sa);
-static int _fill_optpool(struct optpool *opts, char **argv);
+static struct optpool *_alloc_and_fill_optpool(struct alloc *alloc,
+                                               const char *file, char **argv);
 
 
 int main(int argc, char **argv)
@@ -109,6 +110,7 @@ static int _main_on_local(int argc, char **argv)
 	struct sockaddr_in sa;
 	struct job *job;
 	const char *path;
+	struct optpool *opts;
 
 	alloc = libc_allocator_with_debugging();
 
@@ -118,17 +120,17 @@ static int _main_on_local(int argc, char **argv)
 		return err;
 	}
 
-	err = _fill_optpool(&spawn.opts, argv);
+	opts = _alloc_and_fill_optpool(spawn.alloc, SPAWN_CONFIG_DEFAULT, argv);
 	if (unlikely(err))
 		return err;
 
-	err = spawn_setup_on_local(&spawn, devel_nhosts, devel_hostlist, devel_tree_width);
+	err = spawn_setup_on_local(&spawn, opts, devel_nhosts, devel_hostlist, devel_tree_width);
 	if (unlikely(err)) {
 		error("Failed to setup spawn instance.");
 		return err;
 	}
 
-	path = optpool_find_by_key(&spawn.opts, "ExecPlugin");
+	path = optpool_find_by_key(spawn.opts, "ExecPlugin");
 	if (unlikely(!path)) {
 		error("Missing 'ExecPlugin' option.");
 		return -EINVAL;
@@ -423,24 +425,38 @@ fail:
 	return err;
 }
 
-static int _fill_optpool(struct optpool *opts, char **argv)
+static struct optpool *_alloc_and_fill_optpool(struct alloc *alloc,
+                                               const char *file, char **argv)
 {
 	int err;
+	struct optpool *opts;
 	FILE *fp;
 
-	fp = fopen(SPAWN_CONFIG_DEFAULT, "r");
+	err = ZALLOC(alloc, (void **)&opts, 1, sizeof(struct optpool), "opts");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		return NULL;
+	}
+
+	err = optpool_ctor(opts, alloc);
+	if (unlikely(err)) {
+		fcallerror("optpool_ctor", err);
+		goto fail;
+	}
+
+	fp = fopen(file, "r");
 	if (unlikely(!fp)) {
-		error("Failed to open configuration file '%s'.", SPAWN_CONFIG_DEFAULT);
-		return -ESOMEFAULT;
+		error("Failed to open configuration file '%s'.", file);
+		goto fail;
 	}
 
 	err = optpool_parse_file(opts, fp);
 	if (unlikely(err)) {
 		error("Failed to parse the configuration file '%s' " \
-		      "(optpool_parse_cmdline_args failed with error %d)", 
-		      SPAWN_CONFIG_DEFAULT, err);
+		      "(optpool_parse_cmdline_args failed with error %d)",
+		      file, err);
 		fclose(fp);
-		return err;
+		goto fail;
 	}
 
 	fclose(fp);
@@ -449,9 +465,16 @@ static int _fill_optpool(struct optpool *opts, char **argv)
 	if (unlikely(err)) {
 		error("Failed to parse the command line arguments " \
 		      "(optpool_parse_cmdline_args failed with error %d)", err);
-		return err;
+		goto fail;
 	}
 
-	return 0;
+	return opts;
+
+fail:
+	err = ZFREE(alloc, (void **)&opts, 1, sizeof(struct optpool), "");
+	if (unlikely(err))
+		fcallerror("ZFREE", err);
+
+	return NULL;
 }
 

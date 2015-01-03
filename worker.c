@@ -315,8 +315,8 @@ static int _free_exec_work_item(struct exec_worker_pool *self,
 {
 	int err;
 
-	err = array_of_str_free(self->alloc, 
-	                        ((*wkitem)->argc + 1), 
+	err = array_of_str_free(self->alloc,
+	                        ((*wkitem)->argc + 1),
 	                        &(*wkitem)->argv);
 	if (unlikely(err))
 		return err;
