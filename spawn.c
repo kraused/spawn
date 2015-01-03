@@ -55,6 +55,12 @@ int spawn_ctor(struct spawn *self, struct alloc *alloc)
 		return err;
 	}
 
+	/* TODO We can easily make these parameters configurate in the context of the master
+	 *      process by reading CommBufpoolSize, CommSendqSize and CommRecvqSize from the
+	 *      configuration. The other processes do not have these availables though when
+	 *      calling spawn_ctor().
+	 */
+
 	err = buffer_pool_ctor(&self->bufpool,
 	                       self->alloc, 128);	/* FIXME Make this configurable. */
 	if (unlikely(err)) {
@@ -80,11 +86,20 @@ int spawn_dtor(struct spawn *self)
 {
 	int err;
 
-	/* FIXME Check that the list of jobs is empty
-	 */
-	/* FIXME Check that the list of tasks is either empty or cancel all running
-	 *       tasks and free the list.
-	 */
+	if (unlikely(!list_is_empty(&self->jobs))) {
+		error("List of jobs is not empty in spawn_dtor().");
+		/* It is probably easiest just to go on and do nothing. If spawn_dtor()
+		 * is called the execution will terminate soon anyway and trying to
+		 * cleanup is probably a waste of effort.
+		 */
+	}
+
+	if (unlikely(!list_is_empty(&self->tasks))) {
+		error("List of tasks is not empty in spawn_dtor().");
+
+		/* FIXME Cancel running threads.
+		 */
+	}
 
 	err = comm_dtor(&self->comm);
 	if (unlikely(err)) {
@@ -200,7 +215,7 @@ int spawn_setup_worker_pool(struct spawn *self, const char *path)
 	self->exec = cast_to_exec_plugin(plu);
 	if (unlikely(!self->exec)) {
 		error("Plugin '%s' is not an exec plugin.", path);
-		/* FIXME We are leaking a plugin.
+		/* TODO We are leaking a plugin.
 		 */
 		return -EINVAL;
 	}
@@ -254,10 +269,25 @@ int spawn_bind_listenfd(struct spawn *self, struct sockaddr *addr, ull addrlen)
 int spawn_comm_start(struct spawn *self)
 {
 	int err;
+	int backlog;
 
-	err = _tree_listen(&self->tree, 8);	/* FIXME Make the backlog
-						 *       configurable.
-						 */
+	backlog = 8;
+
+	/* TODO We again have the typical chicken-egg problem. When starting to listen for
+	 *      connections we do not yet have the configuration key-value pairs available.
+	 *      However, at some point we need to fix the code anyway to reopen the socket
+	 *      and listen on the correct interface and then we would have the configuration
+	 *      available and could read out the backlog.
+	 */
+	if (self->opts) {
+		err = optpool_find_by_key_as_int(self->opts, "TreeSockBacklog", &backlog);
+		if (unlikely(err)) {
+			error("Could not read 'TreeSockBacklog' option. Using default value.");
+			backlog = 8;
+		}
+	}
+
+	err = _tree_listen(&self->tree, backlog);
 	if (unlikely(err))
 		return err;
 
@@ -357,6 +387,9 @@ static int _copy_hosts(struct spawn *self, struct optpool *opts)
 	const char *hosts;
 	char host[64];
 	int i, j;
+
+	/* TODO Add support for compressed host lists.
+	 */
 
 	hosts = optpool_find_by_key(opts, "Hosts");
 	if (unlikely(!hosts)) {

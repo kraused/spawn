@@ -11,4 +11,13 @@ ExecQueueCapacity=128
 
 # Default tree width
 TreeWidth=32
+# Backlog for the tree listening fd
+TreeSockBacklog=8
+
+# Size of the buffer pool for the communication module
+CommBufpoolSize=128
+# Capacity of the send queue in struct comm
+CommSendqSize=128
+# Capacity of the recv queue in struct comm
+CommRecvqSize=128
 

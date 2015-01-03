@@ -113,15 +113,9 @@ static int _main_on_local(int argc, char **argv)
 
 	alloc = libc_allocator_with_debugging();
 
-	err = spawn_ctor(&spawn, alloc);
-	if (unlikely(err)) {
-		error("struct spawn constructor failed with exit code %d.", err);
-		return err;
-	}
-
-	opts = _alloc_and_fill_optpool(spawn.alloc, SPAWN_CONFIG_DEFAULT, argv);
-	if (unlikely(err))
-		return err;
+	opts = _alloc_and_fill_optpool(alloc, SPAWN_CONFIG_DEFAULT, argv);
+	if (unlikely(!opts))
+		return -ESOMEFAULT;
 
 	/* It would be annoying to spawn thousands of processes and only notice that
 	 * we mistyped an option once the tree is completely set up. Instead we
@@ -131,6 +125,12 @@ static int _main_on_local(int argc, char **argv)
 	err = _check_important_options(opts);
 	if (unlikely(err))
 		return err;
+
+	err = spawn_ctor(&spawn, alloc);
+	if (unlikely(err)) {
+		error("struct spawn constructor failed with exit code %d.", err);
+		return err;
+	}
 
 	err = spawn_setup_on_local(&spawn, opts);
 	if (unlikely(err)) {
