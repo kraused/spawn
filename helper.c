@@ -190,10 +190,29 @@ int xstrdup(struct alloc *alloc, const char *istr, char **ostr)
 	return 0;
 }
 
+int strfree(struct alloc *alloc, char **str)
+{
+	int err;
+
+	if (unlikely(!alloc || !str))
+		return -EINVAL;
+
+	if (*str) {
+		err = FREE(alloc, (void **)str, strlen(*str) + 1,
+		           sizeof(char), "");
+		if (unlikely(err)) {
+			fcallerror("FREE", err);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
 int array_of_str_dup(struct alloc *alloc, int n, const char **istr,
                      char ***ostr)
 {
-	int err, tmp;
+	int err;
 	int i;
 
 	if (unlikely(!istr || !ostr))
@@ -219,16 +238,8 @@ int array_of_str_dup(struct alloc *alloc, int n, const char **istr,
 fail:
 	assert(err);
 
-	for (i = 0; i < n; ++i) {
-		if (!(*ostr)[i])
-			continue;
-
-		/* Do not overwrite err at this point! */
-		tmp = FREE(alloc, (void **)&(*ostr)[i], strlen((*ostr)[i]) + 1,
-		           sizeof(char), "");
-		if (unlikely(tmp))
-			fcallerror("FREE", tmp);
-	}
+	for (i = 0; i < n; ++i)
+		strfree(alloc, &(*ostr)[i]);
 
 	return err;
 }
@@ -239,19 +250,16 @@ int array_of_str_free(struct alloc *alloc, int n, char ***str)
 	int err;
 
 	for (i = 0; i < n; ++i) {
-		if (!(*str)[i])
-			continue;
-
-		/* Do not overwrite err at this point! */
-		err = FREE(alloc, (void **)&(*str)[i], strlen((*str)[i]) + 1,
-		           sizeof(char), "");
+		err = strfree(alloc, &(*str)[i]);
 		if (unlikely(err))
-			fcallerror("FREE", err);
+			return err;
 	}
 
 	err = ZALLOC(alloc, (void **)str, n, sizeof(char *), "");
-	if (unlikely(err))
+	if (unlikely(err)) {
 		fcallerror("ZFREE", err);
+		return err;
+	}
 
 	return 0;
 }

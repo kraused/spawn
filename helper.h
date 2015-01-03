@@ -55,9 +55,16 @@ int do_write(int fd, void *buf, ll size, ll *bytes);
 int do_read(int fd, void *buf, ll size, ll *bytes);
 
 /*
- * Our version of xstrup which uses the allocator alloc.
+ * Our version of strdup which uses the allocator alloc.
  */
 int xstrdup(struct alloc *alloc, const char *istr, char **ostr);
+
+/*
+ * Simple ZFREE() for null-terminated strings. strfree can be
+ * used together with xstrdup(). strfree() can handle NULL pointers
+ * and will do nothing in this case.
+ */
+int strfree(struct alloc *alloc, char **str);
 
 /*
  * Duplicate an array of strings.
