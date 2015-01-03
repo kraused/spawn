@@ -38,12 +38,13 @@ static int _free_job_join(struct alloc *alloc, struct job_join **self);
 static int _join_work(struct job *job, struct spawn *spawn, int *completed);
 static int _join_send_request(struct spawn *spawn, int parent);
 static int _job_task_ctor(struct job_task *self, struct alloc *alloc,
-                          const char *path, int channel);
+                          const char *path, ui16 channel);
 static int _job_task_dtor(struct job_task *self);
 static int _free_job_task(struct alloc *alloc, struct job_task **self);
 static int _task_work(struct job *job, struct spawn *spawn, int *completed);
-static int _task_send_request(struct spawn *spawn, const char *path, int channel);
+static int _task_send_request(struct spawn *spawn, const char *path, ui16 channel);
 static int _sockaddr(int fd, ui32 *ip, ui32 *portnum);
+static int _prepare_task_job(struct spawn *spawn);
 
 
 int alloc_job_build_tree(struct alloc *alloc, struct spawn *spawn,
@@ -77,7 +78,7 @@ int alloc_job_join(struct alloc *alloc, int parent, struct job **self)
 }
 
 int alloc_job_task(struct alloc *alloc, const char* path,
-                   int channel, struct job **self)
+                   ui16 channel, struct job **self)
 {
 	int err;
 
@@ -264,7 +265,10 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 			err = exec_worker_pool_start(spawn->wkpool);
 			if (unlikely(err)) {
 				fcallerror("exec_worker_pool_start", err);
-				die();	/* FIXME */
+				die();	/* Better to stop at this point
+					 * since we cannot be sure that the
+					 * code does not deadlock later on.
+					 */
 			}
 		}
 
@@ -313,7 +317,7 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 				                                       self->hosts + self->children[i].host + 1);
 				if (unlikely(err)) {
 					fcallerror("_send_request_build_tree_message", err);
-					die();
+					die();	/* FIXME */
 				}
 			}
 
@@ -344,23 +348,17 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 
 	if (*completed) {
 		if (0 == spawn->tree.here) {
-			struct job *job;
-
 			err = exec_worker_pool_stop(spawn->wkpool);
-			if (unlikely(err)) {
+			if (unlikely(err))
 				fcallerror("exec_worker_pool_stop", err);
-				die();	/* FIXME */
-			}
+				/* Still possible to go on.
+				 */
 
-			/* FIXME Channel allocation.
-			 */
-			err = alloc_job_task(spawn->alloc, TASK_PLUGIN, 1, &job);
-			if (unlikely(err)) {
-				fcallerror("alloc_job_task", err);
-				die();	/* FIXME */
-			}
-
-			list_insert_before(&spawn->jobs, &job->list);
+			err = _prepare_task_job(spawn);
+			if (unlikely(err))
+				fcallerror("_prepare_task_job", err);
+				/* loop() will terminate.
+				 */
 		}
 
 		log("Finished building the tree after %lld second(s).", llnow() - self->start);
@@ -583,7 +581,7 @@ static int _join_send_request(struct spawn *spawn, int parent)
 }
 
 static int _job_task_ctor(struct job_task *self, struct alloc *alloc,
-                          const char *path, int channel)
+                          const char *path, ui16 channel)
 {
 	int err;
 
@@ -676,7 +674,7 @@ static int _task_work(struct job *job, struct spawn *spawn, int *completed)
 	return 0;
 }
 
-static int _task_send_request(struct spawn *spawn, const char *path, int channel)
+static int _task_send_request(struct spawn *spawn, const char *path, ui16 channel)
 {
 	int err;
 	struct message_header       header;
@@ -721,6 +719,36 @@ static int _sockaddr(int fd, ui32 *ip, ui32 *portnum)
 
 	*ip      = ntohl(sa.sin_addr.s_addr);
 	*portnum = ntohs(sa.sin_port);
+
+	return 0;
+}
+
+static int _prepare_task_job(struct spawn *spawn)
+{
+	int err;
+	struct job *job;
+	const char *plugin;
+	ui16 channel;
+
+	plugin = optpool_find_by_key(spawn->opts, "TaskPlugin");
+	if (unlikely(!plugin)) {
+		error("Missing 'TaskPlugin' option.");
+		return -EINVAL;
+	}
+
+	err = spawn_comm_resv_channel(spawn, &channel);
+	if (unlikely(err)) {
+		fcallerror("spawn_comm_alloc_channel", err);
+		channel = 1;
+	}
+
+	err = alloc_job_task(spawn->alloc, plugin, channel, &job);
+	if (unlikely(err)) {
+		fcallerror("alloc_job_task", err);
+		return err;
+	}
+
+	list_insert_before(&spawn->jobs, &job->list);
 
 	return 0;
 }

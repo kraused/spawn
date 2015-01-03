@@ -99,7 +99,7 @@ struct job_task
 	struct job	job;
 
 	char		*path;
-	int		channel;
+	ui16		channel;
 };
 
 /*
@@ -117,7 +117,7 @@ int alloc_job_join(struct alloc *alloc, int parent, struct job **self);
  * Allocate a struct job_task on the heap and call the constructor.
  */
 int alloc_job_task(struct alloc *alloc, const char* path,
-                   int channel, struct job **self);
+                   ui16 channel, struct job **self);
 
 /*
  * Destroy and free a heap allocated job structure.
