@@ -102,7 +102,7 @@ int spawn_comm_halt(struct spawn *self);
 /*
  * Flush the communication queue.
  */
-int spawn_comm_flush_sendq(struct spawn *self);
+int spawn_comm_flush(struct spawn *self);
 
 /*
  * Send a message.

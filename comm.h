@@ -151,9 +151,10 @@ int comm_dequeue(struct comm *self, struct buffer **buffer);
 int comm_dequeue_would_succeed(struct comm *self, int *result);
 
 /*
- * Flush the communication queue.
+ * Flush the communication queues. Block until the send queue is empty
+ * and all packages are routed.
  */
-int comm_flush_sendq(struct comm *self);
+int comm_flush(struct comm *self);
 
 #endif
 

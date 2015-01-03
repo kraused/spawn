@@ -251,13 +251,13 @@ int spawn_comm_halt(struct spawn *self)
 	return 0;
 }
 
-int spawn_comm_flush_sendq(struct spawn *self)
+int spawn_comm_flush(struct spawn *self)
 {
 	int err;
 
-	err = comm_flush_sendq(&self->comm);
+	err = comm_flush(&self->comm);
 	if (unlikely(err)) {
-		fcallerror("comm_flush_sendq", err);
+		fcallerror("comm_flush", err);
 		return err;
 	}
 

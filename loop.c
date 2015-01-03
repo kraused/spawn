@@ -76,13 +76,13 @@ int loop(struct spawn *spawn)
 	_ping(spawn, 60);	/* First time nothing is send. */
 
 	while (1) {
-		if (1 == _finished) {
+		if (_finished) {
 			err = _quit(spawn);
 			if(unlikely(err))
 				fcallerror("_quit", err);
-		}
-		if (_finished)
+
 			break;
+		}
 
 		err = _handle_jobs(spawn);
 		if (unlikely(err))
@@ -925,9 +925,17 @@ static int _quit(struct spawn *spawn)
 {
 	int err;
 
-	err = _send_exit(spawn);
-	if (unlikely(err))
+	if (1 == _finished) {
+		err = _send_exit(spawn);
+		if (unlikely(err))
+			return err;
+	}
+
+	err = spawn_comm_flush(spawn);
+	if (unlikely(err)) {
+		fcallerror("spawn_comm_flush", err);
 		return err;
+	}
 
 	return 0;
 }
@@ -950,12 +958,6 @@ static int _send_exit(struct spawn *spawn)
 	err = spawn_send_message(spawn, &header, (void *)&msg);
 	if (unlikely(err)) {
 		fcallerror("spawn_send_message", err);
-		return err;
-	}
-
-	err = spawn_comm_flush_sendq(spawn);
-	if (unlikely(err)) {
-		fcallerror("spawn_comm_flush", err);
 		return err;
 	}
 
