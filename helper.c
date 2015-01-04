@@ -15,6 +15,7 @@
 #include <sys/un.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
+#include <time.h>
 
 #include "config.h"
 #include "compiler.h"
@@ -315,5 +316,38 @@ ll llnow()
 	gettimeofday(&tv, NULL);
 
 	return tv.tv_sec;
+}
+
+int add_timespecs(const struct timespec *x, 
+                  const struct timespec *y, struct timespec *z)
+{
+	struct timespec xp = *x;
+	struct timespec yp = *y;
+
+	z->tv_sec  = xp.tv_sec  + yp.tv_sec;
+	z->tv_nsec = xp.tv_nsec + yp.tv_nsec;
+
+	if (z->tv_nsec >= 1000000000L) {
+		z->tv_sec  += 1;
+		z->tv_nsec -= 1000000000L;
+	}
+
+	return 0;
+}
+
+int abstime_near_future(struct timespec *delay, struct timespec *x)
+{
+	int err;
+
+	err = clock_gettime(CLOCK_REALTIME, x);
+	if (-1 == err) {
+		error("clock_gettime() failed. errno = %d says '%s'.",
+		      errno, strerror(errno));
+		return -errno;
+	}
+
+	add_timespecs(x, delay, x);
+
+	return 0;
 }
 

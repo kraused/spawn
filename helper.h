@@ -7,6 +7,7 @@
 struct pollfd;
 struct sockaddr;
 struct alloc;
+struct timespec;
 
 #define MAX(X,Y)	(((X) >= (Y)) ? (X) : (Y))
 #define MIN(X,Y)	(((X) >= (Y)) ? (Y) : (X))
@@ -91,6 +92,18 @@ ll gettid();
  * Get the seconds since the start of the epoch.
  */
 ll llnow();
+
+/*
+ * Add two timespecs together and return the result in z. The arguments
+ * may alias each other.
+ */
+int add_timespecs(const struct timespec *x,
+                  const struct timespec *y, struct timespec *z);
+
+/*
+ * Get the current time plus a delay.
+ */
+int abstime_near_future(struct timespec *delay, struct timespec *x);
 
 #endif
 
