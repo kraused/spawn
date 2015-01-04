@@ -153,12 +153,21 @@ int exec_worker_pool_start(struct exec_worker_pool *self)
 
 int exec_worker_pool_stop(struct exec_worker_pool *self)
 {
+	int err;
+	int i;
+
 	atomic_write(self->done, 1);
 	/* A busy loop should be fine in this situation. We anyway only stop
 	 * the worker pool if the queues are empty and in that case the threads
 	 * will not utilize the CPU at all so we have some free cycles to spare.
 	 */
 	while (!_all_threads_done(self));
+
+	for (i = 0; i < self->nthreads; ++i) {
+		err = thread_join(&self->threads[i]);
+		if (unlikely(err))
+			fcallerror("thread_join", err);
+	}
 
 	return 0;
 }
