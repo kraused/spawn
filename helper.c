@@ -210,7 +210,7 @@ int strfree(struct alloc *alloc, char **str)
 	return 0;
 }
 
-int array_of_str_dup(struct alloc *alloc, int n, const char **istr,
+int array_of_str_dup(struct alloc *alloc, int n, const char *const *istr,
                      char ***ostr)
 {
 	int err;
@@ -318,7 +318,7 @@ ll llnow()
 	return tv.tv_sec;
 }
 
-int add_timespecs(const struct timespec *x, 
+int add_timespecs(const struct timespec *x,
                   const struct timespec *y, struct timespec *z)
 {
 	struct timespec xp = *x;

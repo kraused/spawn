@@ -197,6 +197,20 @@ int spawn_setup_on_other(struct spawn *self, int nhosts,
 	return 0;
 }
 
+int spawn_perform_delayed_setup(struct spawn *self,
+                                struct optpool *opts)
+{
+	int err;
+
+	self->opts = opts;
+
+	err = _copy_hosts(self, opts);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
 int spawn_setup_worker_pool(struct spawn *self, const char *path)
 {
 	struct plugin *plu;
@@ -387,6 +401,7 @@ static int _copy_hosts(struct spawn *self, struct optpool *opts)
 	const char *hosts;
 	char host[64];
 	int i, j;
+	int nhosts;
 
 	/* TODO Add support for compressed host lists.
 	 */
@@ -394,21 +409,31 @@ static int _copy_hosts(struct spawn *self, struct optpool *opts)
 	hosts = optpool_find_by_key(opts, "Hosts");
 	if (unlikely(!hosts)) {
 		error("Missing 'Hosts' option.");
-		die();	/* Impossible anyway. Checked in 
+		die();	/* Impossible anyway. Checked in
 			 * _check_important_options() in
 			 * main.c
 			 */
 	}
 
-	self->nhosts = _count_hosts(hosts);
-	if (self->nhosts < 0) {
-		fcallerror("_count_hosts", self->nhosts);
+	nhosts = _count_hosts(hosts);
+	if (nhosts < 0) {
+		fcallerror("_count_hosts", nhosts);
 		return -EINVAL;
 	}
-	if (self->nhosts == 0) {
+	if (nhosts == 0) {
 		error("Number of hosts is zero.");
 		return -EINVAL;
 	}
+
+	/* If we received the number of hosts as part of argv we should
+	 * check that the value is actually correct.
+	 */
+	if ((self->nhosts > 0) && (nhosts != self->nhosts)) {
+		error("Number of hosts does not match expected value.");
+		die();
+	}
+
+	self->nhosts = nhosts;
 
 	err = ZALLOC(self->alloc, (void **)&self->hosts, self->nhosts,
 	             sizeof(char *), "host list");

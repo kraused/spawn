@@ -610,7 +610,11 @@ static int _pack_message_request_build_tree(struct buffer *buffer,
 {
 	int err;
 
-	err = buffer_pack_array_of_str(buffer, msg->nhosts, msg->hosts);
+	err = buffer_pack_ui64(buffer, &msg->nhosts, 1);
+	if (unlikely(err))
+		return err;
+
+	err = buffer_pack_si32(buffer, msg->hosts, msg->nhosts);
 	if (unlikely(err))
 		return err;
 
@@ -623,7 +627,17 @@ static int _unpack_message_request_build_tree(struct buffer *buffer,
 {
 	int err;
 
-	err = buffer_unpack_array_of_str(buffer, alloc, &msg->nhosts, &msg->hosts);
+	err = buffer_unpack_ui64(buffer, &msg->nhosts, 1);
+	if (unlikely(err))
+		return err;
+
+	err = ZALLOC(alloc, (void **)&msg->hosts, msg->nhosts, sizeof(si32), "hosts");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		return err;
+	}
+
+	err = buffer_unpack_si32(buffer, msg->hosts, msg->nhosts);
 	if (unlikely(err))
 		return err;
 
@@ -635,9 +649,11 @@ static int _free_message_request_build_tree(struct alloc *alloc,
 {
 	int err;
 
-	err = array_of_str_free(alloc, msg->nhosts, (char ***)&msg->hosts);
-	if (unlikely(err))
-		return err;	/* array_of_str_free() reports reason. */
+	err = ZFREE(alloc, (void **)&msg->hosts, msg->nhosts, sizeof(si32), "hosts");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
+		return err;
+	}
 
 	return 0;
 }

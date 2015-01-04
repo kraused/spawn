@@ -41,11 +41,12 @@ struct job
  * Internal datastructure for the management of childs in
  * struct job_build_tree
  */
-struct _job_build_tree_child
+struct job_build_tree_child
 {
 	int	id;	/* Participant id */
 	int	host;
 	int	nhosts;
+	int	port;
 	enum {
 		UNBORN,
 		UNKNOWN,
@@ -67,11 +68,14 @@ struct job_build_tree
 
 	struct alloc			*alloc;
 
+	/* Hosts are identified by their index into the spawn->hosts
+	 * array.
+	 */
 	int				nhosts;
-	char				**hosts;
+	int				*hosts;
 
 	int				nchildren;
-	struct _job_build_tree_child	*children;
+	struct job_build_tree_child	*children;
 
 	/* Used to keep track of the progress. */
 	int				phase;
@@ -104,9 +108,11 @@ struct job_task
 
 /*
  * Allocate a struct job_build_tree on the heap and call the constructor.
+ * If nhosts == spawn->nhosts the hosts parameter is ignored and may equal
+ * NULL since the self->hosts is necessarily equal to [0 .. (nhosts-1)].
  */
 int alloc_job_build_tree(struct alloc *alloc, struct spawn *spawn,
-                         int nhosts, char **hosts, struct job **self);
+                         int nhosts, int *hosts, struct job **self);
 
 /*
  * Allocate a struct job_join on the heap and call the constructor.

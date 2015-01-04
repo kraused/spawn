@@ -103,5 +103,10 @@ int network_initialize_lft(struct network *self, int port);
  */
 int network_modify_lft(struct network *self, int port, si32 *ids, si32 nids);
 
+/*
+ * Print the LFT for debugging purposes
+ */
+int network_debug_print_lft(struct network *self);
+
 #endif
 

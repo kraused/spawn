@@ -22,13 +22,13 @@
 
 
 static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc,
-                                struct spawn *spawn, int nhosts, char **hosts);
+                                struct spawn *spawn, int nhosts, int *hosts);
 static int _job_build_tree_dtor(struct job_build_tree *self);
 static int _free_job_build_tree(struct alloc *alloc, struct job_build_tree **self);
 static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed);
 static int _build_tree_spawn_children(struct job_build_tree *self, struct spawn *spawn);
 static int _send_request_build_tree_message(struct job_build_tree *self, struct spawn *spawn,
-                                            int dest, int nhosts, char **hosts);
+                                            int dest, int nhosts, si32 *hosts);
 static int _send_response_build_tree_message(struct job_build_tree *self, struct spawn *spawn);
 static int _job_join_ctor(struct job_join *self, struct alloc *alloc, int parent);
 static int _job_join_dtor(struct job_join *self);
@@ -46,7 +46,7 @@ static int _prepare_task_job(struct spawn *spawn);
 
 
 int alloc_job_build_tree(struct alloc *alloc, struct spawn *spawn,
-                         int nhosts, char **hosts, struct job **self)
+                         int nhosts, int *hosts, struct job **self)
 {
 	int err;
 
@@ -122,7 +122,7 @@ int free_job(struct job **self)
 
 
 static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc,
-                                struct spawn *spawn, int nhosts, char **hosts)
+                                struct spawn *spawn, int nhosts, int *hosts)
 {
 	int err, tmp;
 	int i, quot;
@@ -135,7 +135,6 @@ static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc
 			 */
 	}
 
-
 	self->job.alloc = alloc;
 	self->job.type  = JOB_TYPE_BUILD_TREE;
 	self->job.work  = _build_tree_work;
@@ -146,19 +145,18 @@ static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc
 	self->phase  = 1;
 	self->nhosts = nhosts;
 
-	err = ZALLOC(alloc, (void **)&self->hosts, self->nhosts,
-	             sizeof(char *), "hosts");
+	err = ZALLOC(alloc, (void **)&self->hosts,
+	             self->nhosts, sizeof(int), "hosts");
 	if (unlikely(err)) {
 		fcallerror("ZALLOC", err);
 		return err;
 	}
 
-	for (i = 0; i < self->nhosts; ++i) {
-		err = xstrdup(alloc, hosts[i], &self->hosts[i]);
-		if (unlikely(err)) {
-			fcallerror("xstrdup", err);
-			goto fail1;
-		}
+	if ((spawn->nhosts == nhosts)) {
+		for (i = 0; i < self->nhosts; ++i)
+			self->hosts[i] = i;
+	} else {
+		memcpy(self->hosts, hosts, self->nhosts*sizeof(int));
 	}
 
 	self->nchildren = MIN(treewidth, self->nhosts);
@@ -167,10 +165,10 @@ static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc
 	log("# children = %d", self->nchildren);
 
 	err = ZALLOC(alloc, (void **)&self->children, self->nchildren,
-	             sizeof(struct _job_build_tree_child), "children");
+	             sizeof(struct job_build_tree_child), "children");
 	if (unlikely(err)) {
 		fcallerror("ZALLOC", err);
-		goto fail2;
+		goto fail;
 	}
 
 	for (i = 0; i < self->nchildren; ++i) {
@@ -178,6 +176,7 @@ static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc
 		self->children[i].nhosts  = quot - 1;
 		self->children[i].id      = spawn->tree.here + 1 + quot*i;
 		self->children[i].state   = UNBORN;
+		self->children[i].port    = -1;
 		self->children[i].spawned = 0;
 	}
 
@@ -186,25 +185,8 @@ static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc
 
 	return 0;
 
-fail2:
-	tmp = ZFREE(self->alloc, (void **)&self->children, self->nchildren,
-	            sizeof(struct _job_build_tree_child), "");
-	if (unlikely(tmp))
-		fcallerror("ZFREE", tmp);
-
-fail1:
-	for (i = 0; i < self->nhosts; ++i) {
-		if (unlikely(!self->hosts[i]))
-			continue;
-
-		tmp = ZFREE(self->alloc, (void **)&self->hosts[i],
-		            (strlen(self->hosts[i]) + 1), sizeof(char), "");
-		if (unlikely(tmp))
-			fcallerror("ZFREE", tmp);
-	}
-
-	tmp = ZFREE(self->alloc, (void **)&self->hosts, self->nhosts,
-	            sizeof(char *), "");
+fail:
+	tmp = ZFREE(alloc, (void **)&self->hosts, self->nhosts, sizeof(int), "");
 	if (unlikely(tmp))
 		fcallerror("ZFREE", tmp);
 
@@ -214,26 +196,16 @@ fail1:
 static int _job_build_tree_dtor(struct job_build_tree *self)
 {
 	int err;
-	int i;
 
 	err = ZFREE(self->alloc, (void **)&self->children, self->nchildren,
-	            sizeof(struct _job_build_tree_child), "");
+	            sizeof(struct job_build_tree_child), "");
 	if (unlikely(err)) {
 		fcallerror("ZFREE", err);
 		return err;
 	}
 
-	for (i = 0; i < self->nchildren; ++i) {
-		err = ZFREE(self->alloc, (void **)&self->hosts[i],
-		            (strlen(self->hosts[i]) + 1), sizeof(char), "");
-		if (unlikely(err)) {
-			fcallerror("ZFREE", err);
-			return err;
-		}
-	}
-
-	err = ZFREE(self->alloc, (void **)&self->hosts, self->nhosts,
-	            sizeof(char *), "");
+	err = ZFREE(self->alloc, (void **)&self->hosts,
+	            self->nhosts, sizeof(int), "");
 	if (unlikely(err)) {
 		fcallerror("ZFREE", err);
 		return err;
@@ -370,6 +342,8 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 				 */
 		}
 
+		network_debug_print_lft(&spawn->tree);
+
 		log("Finished building the tree after %lld second(s).", llnow() - self->start);
 	}
 
@@ -420,7 +394,8 @@ static int _build_tree_spawn_children(struct job_build_tree *self, struct spawn 
 	for (i = 0; i < self->nchildren; ++i) {
 		/* FIXME Capture errors from those snprintf()s! */
 
-		snprintf(host, sizeof(host), self->hosts[self->children[i].host]);
+		snprintf(host, sizeof(host),
+		         spawn->hosts[self->hosts[self->children[i].host]]);
 
 		in.s_addr = htonl(ip);
 		snprintf(argv1, sizeof(argv1), "%s", inet_ntoa(in));
@@ -444,7 +419,7 @@ static int _build_tree_spawn_children(struct job_build_tree *self, struct spawn 
 }
 
 static int _send_request_build_tree_message(struct job_build_tree *self, struct spawn *spawn,
-                                            int dest, int nhosts, char **hosts)
+                                            int dest, int nhosts, si32 *hosts)
 {
 	int err;
 	struct message_header             header;
@@ -615,10 +590,9 @@ static int _job_task_dtor(struct job_task *self)
 {
 	int err;
 
-	err = ZFREE(self->job.alloc, (void **)&self->path, strlen(self->path) + 1,
-	            sizeof(char), "");
+	err = strfree(self->job.alloc, &self->path);
 	if (unlikely(err)) {
-		fcallerror("ZFREE", err);
+		fcallerror("strfree", err);
 		return err;
 	}
 

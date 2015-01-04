@@ -162,8 +162,8 @@ static int _main_on_local(int argc, char **argv)
 		return err;
 	}
 
-	err = alloc_job_build_tree(alloc, &spawn, 
-	                           spawn.nhosts, spawn.hosts, &job);
+	err = alloc_job_build_tree(alloc, &spawn, spawn.nhosts,
+	                           NULL, &job);
 	if (unlikely(err)) {
 		fcallerror("alloc_job_build_tree", err);
 		goto fail;
@@ -418,6 +418,10 @@ static int _connect_to_parent(struct spawn *spawn, struct sockaddr_in *sa)
 		goto fail;
 	}
 
+	/* Route all the traffic through this one port.
+	 * TODO The problem with this approach is that we have a valid LFT entry for a
+	 *      host that may be dead.
+	 */
 	err = network_initialize_lft(&spawn->tree, 0);
 	if (unlikely(err)) {
 		fcallerror("network_initialize_lft", err);

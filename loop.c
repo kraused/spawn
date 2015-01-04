@@ -33,6 +33,7 @@ static int _handle_accept(struct spawn *spawn, int newfd);
 static int _handle_message(struct spawn *spawn, struct buffer *buffer);
 static int _handle_jobs(struct spawn *spawn);
 static int _handle_request_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static struct job_build_tree *_find_job_build_tree(struct spawn *spawn);
 static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _set_job_join_acked(struct spawn *spawn);
 static int _send_response_join(struct spawn *spawn, int dest);
@@ -47,10 +48,12 @@ static int _handle_response_build_tree(struct spawn *spawn, struct message_heade
 static int _handle_request_task(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum);
-static int _fix_lft(struct spawn *spawn, int port, int dest);
+static int _fix_lft(struct spawn *spawn, int port, int *ids, int nids);
 static int _peeraddr(int fd, ui32 *ip, ui32 *portnum);
+static struct job_build_tree_child *_find_child_by_id(struct job_build_tree *job, int id);
 static int _declare_child_alive(struct job_build_tree *job, int id);
 static int _declare_child_ready(struct job_build_tree *job, int id);
+static int _set_child_port(struct job_build_tree *job, int id, int port);
 static void _sighandler(int signum);
 static int _install_sighandler();
 static int _quit(struct spawn *spawn);
@@ -387,9 +390,7 @@ static int _handle_request_join(struct spawn *spawn, struct message_header *head
 	int err, tmp;
 	struct message_request_join msg;
 	int port, dest;
-	struct list *p;
-	struct job *job;
-	int matches;
+	struct job_build_tree *job;
 
 	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {
@@ -404,9 +405,19 @@ static int _handle_request_join(struct spawn *spawn, struct message_header *head
 		die();
 	}
 
+	job = _find_job_build_tree(spawn);
+	if (unlikely(!job))
+		goto fail;
+
+	err = _set_child_port(job, header->src, port);
+	if (unlikely(err)) {
+		fcallerror("_set_child_port", err);
+		goto fail;
+	}
+
 	debug("Routing messages to %d via port %d.", dest, port);
 
-	err = _fix_lft(spawn, port, dest);
+	err = _fix_lft(spawn, port, &dest, 1);
 	if (unlikely(err)) {
 		fcallerror("_fixup_lft", err);
 		goto fail;
@@ -418,25 +429,9 @@ static int _handle_request_join(struct spawn *spawn, struct message_header *head
 		goto fail;
 	}
 
-	matches = 0;
-
-	LIST_FOREACH(p, &spawn->jobs) {
-		job = LIST_ENTRY(p, struct job, list);
-
-		if (JOB_TYPE_BUILD_TREE == job->type) {
-			err = _declare_child_alive((struct job_build_tree *)job, header->src);
-			if (unlikely(err)) {
-				fcallerror("_declare_child_alive", err);
-				goto fail;
-			}
-
-			++matches;
-		}
-	}
-
-	if (1 != matches) {
-		error("Found %d jobs of type JOB_TYPE_JOIN instead of just one.", matches);
-		err = -ESOMEFAULT;
+	err = _declare_child_alive(job, header->src);
+	if (unlikely(err)) {
+		fcallerror("_declare_child_alive", err);
 		goto fail;
 	}
 
@@ -456,6 +451,32 @@ fail:
 	return err;
 }
 
+static struct job_build_tree *_find_job_build_tree(struct spawn *spawn)
+{
+	int matches;
+	struct list *p;
+	struct job *job;
+	struct job *ret;
+
+	matches = 0;
+
+	LIST_FOREACH(p, &spawn->jobs) {
+		job = LIST_ENTRY(p, struct job, list);
+
+		if (JOB_TYPE_BUILD_TREE == job->type) {
+			ret = job;
+			++matches;
+		}
+	}
+
+	if (1 != matches) {
+		error("Found %d jobs of type JOB_TYPE_JOIN instead of just one.", matches);
+		ret = NULL;
+	}
+
+	return (struct job_build_tree *)ret;
+}
+
 static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
 {
 	int err, tmp;
@@ -472,8 +493,13 @@ static int _handle_response_join(struct spawn *spawn, struct message_header *hea
 		die();  /* Makes no sense to continue. */
 	}
 
-	spawn->opts = msg.opts;
-	msg.opts    = NULL;
+	err = spawn_perform_delayed_setup(spawn, msg.opts);
+	if (unlikely(err)) {
+		fcallerror("spawn_performed_delayed_setup", err);
+		die();	/* State is unclear. */
+	}
+
+	msg.opts = NULL;
 
 	err = _set_job_join_acked(spawn);
 	if (unlikely(err))
@@ -689,10 +715,11 @@ fail:
 static int _handle_response_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
 {
 	int err, tmp;
-	struct list *p;
-	struct job *job;
+	struct job_build_tree *job;
 	struct message_response_build_tree msg;
-	int matches;
+	int i;
+	struct job_build_tree_child *child;
+	si32 *ids;
 
 	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {
@@ -700,25 +727,44 @@ static int _handle_response_build_tree(struct spawn *spawn, struct message_heade
 		die();	/* FIXME ?*/
 	}
 
-	matches = 0;
+	job = _find_job_build_tree(spawn);
+	if (unlikely(!job))
+		goto fail;
 
-	LIST_FOREACH(p, &spawn->jobs) {
-		job = LIST_ENTRY(p, struct job, list);
-
-		if (JOB_TYPE_BUILD_TREE == job->type) {
-			err = _declare_child_ready((struct job_build_tree *)job, header->src);
-			if (unlikely(err)) {
-				fcallerror("_declare_child_alive", err);
-				goto fail;
-			}
-
-			++matches;
-		}
+	err = _declare_child_ready(job, header->src);
+	if (unlikely(err)) {
+		fcallerror("_declare_child_alive", err);
+		goto fail;
 	}
 
-	if (1 != matches) {
-		error("Found %d jobs of type JOB_TYPE_JOIN instead of just one.", matches);
-		err = -ESOMEFAULT;
+	child = _find_child_by_id(job, header->src);
+	if (unlikely(!child)) {
+		error("_find_child_by_id() returned NULL");
+		goto fail;
+	}
+	if (unlikely(child->port < 0)) {
+		error("Port is negative.");
+		goto fail;
+	}
+
+	/* We already set the LFT entry for the host itself so the +1 is fine.
+	 */
+	ids = job->hosts + child->host + 1;
+
+	for (i = 0; i < child->nhosts; ++i)
+		debug("Routing messages to %d via port %d.", ids[i] + 1, child->port);
+
+	/* The root process is not accounted for in the host list in struct spawn
+	 * so we need to add +1 to map from the host id to the network participant id.
+	 */
+	for (i = 0; i < child->nhosts; ++i)
+		ids[i]++;
+	err = _fix_lft(spawn, child->port, ids, child->nhosts);
+	for (i = 0; i < child->nhosts; ++i)
+		ids[i]--;
+
+	if (unlikely(err)) {
+		fcallerror("_fixup_lft", err);
 		goto fail;
 	}
 
@@ -806,12 +852,12 @@ static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum)
 	return found;
 }
 
-static int _fix_lft(struct spawn *spawn, int port, int dest)
+static int _fix_lft(struct spawn *spawn, int port, int *ids, int nids)
 {
 	int err;
 
 	/* Temporarily disable the communication thread. Otherwise it
-	 * happen that we wait for seconds before acquiring the lock.
+	 * may happen that we wait for seconds before acquiring the lock.
 	 */
 	err = comm_stop_processing(&spawn->comm);
 	if (unlikely(err)) {
@@ -822,11 +868,7 @@ static int _fix_lft(struct spawn *spawn, int port, int dest)
 	if (unlikely(err))
 		die();
 
-	/* FIXME This is a tree. We know that header->src is responsible for a
-	 *       full range of ports so we can fix the lft here for multiple ports.
-	 */
-
-	err = network_modify_lft(&spawn->tree, port, &dest, 1);
+	err = network_modify_lft(&spawn->tree, port, ids, nids);
 	if (unlikely(err))
 		die();
 
@@ -869,56 +911,69 @@ static int _peeraddr(int fd, ui32 *ip, ui32 *portnum)
 	return 0;
 }
 
-static int _declare_child_alive(struct job_build_tree *job, int id)
+static struct job_build_tree_child *_find_child_by_id(struct job_build_tree *job, int id)
 {
 	int i;
-	int ok;
+	struct job_build_tree_child *child;
 
-	ok = 0;
-
+	child = NULL;
 	for (i = 0; i < job->nchildren; ++i) {
 		if (job->children[i].id == id) {
-			if (unlikely(!job->children[i].state == UNKNOWN)) {
-				error("Incorrect state %d (expected UNKNOWN = %d)",
-				      job->children[i].state, UNKNOWN);
-			}
-
-			job->children[i].state = ALIVE;
-			ok = 1;
+			child = &job->children[i];
 		}
 	}
 
-	if (unlikely(!ok)) {
+	if (unlikely(!child))
 		error("Found no matching children with id %d.", id);
+
+	return child;
+}
+
+static int _declare_child_alive(struct job_build_tree *job, int id)
+{
+	struct job_build_tree_child *child;
+
+	child = _find_child_by_id(job, id);
+	if (unlikely(!child))
 		return -ESOMEFAULT;
+
+	if (unlikely(!child->state == UNKNOWN)) {
+		error("Incorrect state %d (expected UNKNOWN = %d)",
+		      child->state, UNKNOWN);
 	}
+
+	child->state = ALIVE;
 
 	return 0;
 }
 
 static int _declare_child_ready(struct job_build_tree *job, int id)
 {
-	int i;
-	int ok;
+	struct job_build_tree_child *child;
 
-	ok = 0;
-
-	for (i = 0; i < job->nchildren; ++i) {
-		if (job->children[i].id == id) {
-			if (unlikely(!job->children[i].state == ALIVE)) {
-				error("Incorrect state %d (expected ALIVE = %d)",
-				      job->children[i].state, ALIVE);
-			}
-
-			job->children[i].state = READY;
-			ok = 1;
-		}
-	}
-
-	if (unlikely(!ok)) {
-		error("Found no matching children with id %d.", id);
+	child = _find_child_by_id(job, id);
+	if (unlikely(!child))
 		return -ESOMEFAULT;
+
+	if (unlikely(!child->state == ALIVE)) {
+		error("Incorrect state %d (expected ALIVE = %d)",
+		      child->state, ALIVE);
 	}
+
+	child->state = READY;
+
+	return 0;
+}
+
+static int _set_child_port(struct job_build_tree *job, int id, int port)
+{
+	struct job_build_tree_child *child;
+
+	child = _find_child_by_id(job, id);
+	if (unlikely(!child))
+		return -ESOMEFAULT;
+
+	child->port = port;
 
 	return 0;
 }
@@ -931,11 +986,17 @@ static void _sighandler(int signum)
 
 static int _install_sighandler()
 {
-	if (SIG_ERR == signal(SIGQUIT, _sighandler))
+	struct sigaction act, oact;
+
+	act.sa_handler = _sighandler;
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = SA_RESTART;
+
+	if (sigaction(SIGQUIT, &act, &oact) < 0)
 		return -errno;
-	if (SIG_ERR == signal(SIGINT , _sighandler))
+	if (sigaction(SIGINT , &act, &oact) < 0)
 		return -errno;
-	if (SIG_ERR == signal(SIGTERM, _sighandler))
+	if (sigaction(SIGTERM, &act, &oact) < 0)
 		return -errno;
 
 	return 0;

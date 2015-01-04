@@ -76,9 +76,11 @@ int buffer_seek(struct buffer *self, ll pos)
 		return -EINVAL;
 
 	if (unlikely(pos > self->memsize)) {
-		/* FIXME Using pos here is a pretty bad idea since
-		 *       a subsequent pack function will again cause
-		 *       a reallocation.
+		warn("Seeking beyond capacity. Resizing buffer.");
+		/* Using pos here might not be the best choice ever
+		 * since a subsequent pack function will again cause
+		 * a reallocation but making a good guess for the
+		 * right size is far from easy.
 		 */
 		err = buffer_resize(self, pos);
 		if (unlikely(err)) {

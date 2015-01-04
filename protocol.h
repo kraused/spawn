@@ -95,7 +95,7 @@ struct message_request_exec
 struct message_request_build_tree
 {
 	ui64	nhosts;
-	char	**hosts;
+	si32	*hosts;
 };
 
 struct message_response_build_tree

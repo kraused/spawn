@@ -31,8 +31,8 @@ struct spawn
 	 * spawn program itself is running.
 	 */
 	int			nhosts;
-	/* Names of the hosts in the network. This is non-NULL only in
-	 * the context of the master process (root of the tree).
+	/* Names of the hosts in the network. This value is available only
+	 * after the process has succesfully joined the network.
 	 */
 	char			**hosts;
 
@@ -78,6 +78,14 @@ int spawn_setup_on_local(struct spawn *self,
  */
 int spawn_setup_on_other(struct spawn *self, int nhosts,
                          int parent, int here);
+
+/*
+ * Perform actions that could not be performed in
+ * spawn_setup_on_other() because the configuration options were
+ * not available.
+ */
+int spawn_perform_delayed_setup(struct spawn *self,
+                                struct optpool *opts);
 
 /*
  * Load the exec plugin and setup the worker pool. The workers are not yet

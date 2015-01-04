@@ -6,6 +6,7 @@
 #include "error.h"
 #include "alloc.h"
 #include "network.h"
+#include "helper.h"
 
 
 int network_ctor(struct network *self, struct alloc *alloc)
@@ -128,6 +129,46 @@ int network_modify_lft(struct network *self, int port, si32 *ids, si32 nids)
 			return -EINVAL;
 
 		self->lft[ids[i]] = port;
+	}
+
+	return 0;
+}
+
+int network_debug_print_lft(struct network *self)
+{
+	int i, n;
+
+	i = 0;
+	while (i < self->size) {
+		n = MIN(4, self->size - i);
+
+		switch (n) {
+		case 4:
+			debug("%2d-%2d: %2d, %2d, %2d, %2d",
+			      i, i+n-1,
+			      self->lft[i  ], self->lft[i+1], self->lft[i+2],
+			      self->lft[i+3]);
+			break;
+		case 3:
+			debug("%2d-%2d: %2d, %2d, %2d",
+			      i, i+n-1,
+			      self->lft[i  ], self->lft[i+1], self->lft[i+2]);
+			break;
+		case 2:
+			debug("%2d-%2d: %2d, %2d",
+			      i, i+n-1,
+			      self->lft[i  ], self->lft[i+1]);
+			break;
+		case 1:
+			debug("%2d-%2d: %2d",
+			      i, i+n-1,
+			      self->lft[i  ]);
+			break;
+		default:
+			die();	/* Impossible */
+		}
+
+		i += n;
 	}
 
 	return 0;
