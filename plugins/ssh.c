@@ -1,5 +1,10 @@
 
-#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #include "compiler.h"
 #include "error.h"
@@ -9,6 +14,22 @@
 static int _exec(struct exec_plugin *self,
                  const char *host,
                  char *const *argv);
+static char **_combine_argv(char *const *oargv, const char *host);
+
+static const char *_ssh_argv[] = {
+	"/usr/bin/ssh",
+	"-o", "StrictHostKeyChecking=no",
+	"-o", "UserKnownHostsFile=/dev/null",
+	"-o", "BatchMode=yes",
+	"-o", "ForwardX11=no",		/* FIXME We need to be able to
+					 *       unset this
+					 */
+	"-o", "ConnectTimeout=60",	/* FIXME Make this configurable.
+					 */
+	/* Not null terminated - Will be merged with
+	 * user provided arguments.
+	 */
+};
 
 static struct exec_plugin_ops _ssh_ops = {
 	.exec = _exec
@@ -41,6 +62,86 @@ static int _exec(struct exec_plugin *self,
                  const char *host,
                  char *const *argv)
 {
-	return -1;
+	long long child;
+	long long p;
+	int status;
+
+	if (unlikely(!host))
+		return -EINVAL;
+
+	child = fork();
+	if (0 == child) {
+		char *env[] = {NULL};
+
+		argv = _combine_argv(argv, host);
+
+		execve(argv[0], argv, env);
+		error("execve() failed. errno = %d says '%s'.",
+		      errno, strerror(errno));
+		exit(-1);
+	}
+	else if (unlikely(-1 == child)) {
+		error("fork() failed. errno = %d says '%s'.",
+		      errno, strerror(errno));
+		return -errno;
+	}
+
+	log("Child process %d is alive.", (int )child);
+
+	/* TODO Handle EINTR? */
+	p = waitpid(child, &status, 0);
+	if (unlikely(p != child)) {
+		error("waitpid() failed. errno = %d says '%s'.",
+		      errno, strerror(errno));
+		return -errno;
+	}
+
+	if (likely(WIFEXITED(status))) {
+		log("Child process terminated with exit code %d.", WEXITSTATUS(status));
+		return -WEXITSTATUS(status);
+
+	} else if(WIFSIGNALED(status)) {
+		log("Child was terminated by signal %d.", WTERMSIG(status));
+		return -ESOMEFAULT;
+	} else {
+		error("Child neithr terminated nor was terminated by a signal.");
+		return -ESOMEFAULT;
+	}
+
+	return 0;
+}
+
+static char **_combine_argv(char *const *oargv, const char *host)
+{
+	int i;
+	char **argv;
+
+	i = 0;
+	while (oargv[i]) i++;
+	++i;
+
+	argv = malloc((i + 1 + sizeof(_ssh_argv)/sizeof(_ssh_argv[0]))*sizeof(char *));
+	if (unlikely(!argv))
+		return NULL;
+
+	/* We can freely strdup() in here since _combine_argv() is called by
+	 * the forked process which will next execute an execve() call.
+	 */
+
+	i = 0;
+	for (i = 0; i < sizeof(_ssh_argv)/sizeof(_ssh_argv[0]); ++i)
+		argv[i] = strdup(_ssh_argv[i]);
+
+	argv[i] = strdup(host);
+	++i;
+
+	while (*oargv) {
+		argv[i] = *oargv;
+		++i;
+		++oargv;
+	}
+	argv[i] = NULL;
+
+	return argv;
 }
 
