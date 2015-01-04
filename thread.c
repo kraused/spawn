@@ -61,9 +61,27 @@ fail1:
 int thread_dtor(struct thread *self)
 {
 	int err;
+	int state;
 
-	/* FIXME Cancel the thread if it still running?
-	 */
+	state = atomic_read(self->state);
+	if ((THREAD_STATE_INITED  == state) ||
+	    (THREAD_STATE_STARTED == state)) {
+		error("thread_dtor() called but thread is "
+		      "still running (state %d). Canceling it.", state);
+
+		/* This may block for ever.
+		 */
+		err = thread_cancel(self);
+		if (unlikely(err))
+			fcallerror("thread_cancel", err);
+	} else
+	if ((THREAD_STATE_DONE == state)) {
+		error("Thread was not joined before thread_dtor() was called.");
+
+		err = thread_join(self);
+		if (unlikely(err))
+			fcallerror("thread_join", err);
+	}
 
 	err = pthread_mutex_destroy(&self->mutex);
 	if (unlikely(err)) {
