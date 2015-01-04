@@ -34,6 +34,7 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer);
 static int _handle_jobs(struct spawn *spawn);
 static int _handle_request_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _set_job_join_acked(struct spawn *spawn);
 static int _send_response_join(struct spawn *spawn, int dest);
 static int _handle_ping(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_request_exec(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
@@ -230,8 +231,12 @@ static int _send_ping(struct spawn *spawn, ll now)
 }
 
 /*
- * TODO Keep the ports in a local array. Insert them at a later
- *      point all at once!
+ * TODO Stopping and restarting the communication thread is a rather heavy
+ *      operation. It might be advantageous to aggregate the connections and
+ *      only insert a batch of them at once. This however raises new questions
+ *      concerning the cost of the additional delay (we will not be able to
+ *      receive the REQUEST_JOIN until we updated the lft) and a good choice
+ *      of the batch size and timeout.
  */
 static int _handle_accept(struct spawn *spawn, int newfd)
 {
@@ -285,7 +290,10 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 	err = unpack_message_header(buffer, &header);
 	if (unlikely(err)) {
 		fcallerror("unpack_message_header", err);
-		die();	/* FIXME */
+		die();	/* This is pretty much impossible anyway since
+			 * the communication thread had a look at the
+			 * header to see how to treat the packet.
+			 */
 	}
 
 	debug("Received a %d message from %d.", header.type, header.src);
@@ -451,10 +459,7 @@ fail:
 static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
 {
 	int err, tmp;
-	struct list *p;
-	struct job *job;
 	struct message_response_join msg;
-	int matches;
 
 	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {
@@ -470,22 +475,9 @@ static int _handle_response_join(struct spawn *spawn, struct message_header *hea
 	spawn->opts = msg.opts;
 	msg.opts    = NULL;
 
-	matches = 0;
-
-	LIST_FOREACH(p, &spawn->jobs) {
-		job = LIST_ENTRY(p, struct job, list);
-
-		if (JOB_TYPE_JOIN == job->type) {
-			((struct job_join *)job)->acked = 1;
-			++matches;
-		}
-	}
-
-	if (1 != matches) {
-		error("Found %d jobs of type JOB_TYPE_JOIN instead of just one.", matches);
-		err = -ESOMEFAULT;
+	err = _set_job_join_acked(spawn);
+	if (unlikely(err))
 		goto fail;
-	}
 
 	err = free_message_payload(header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {
@@ -501,6 +493,31 @@ fail:
 		fcallerror("free_message_payload", tmp);
 
 	return err;
+}
+
+static int _set_job_join_acked(struct spawn *spawn)
+{
+	int matches;
+	struct list *p;
+	struct job *job;
+
+	matches = 0;
+
+	LIST_FOREACH(p, &spawn->jobs) {
+		job = LIST_ENTRY(p, struct job, list);
+
+		if (JOB_TYPE_JOIN == job->type) {
+			((struct job_join *)job)->acked = 1;
+			++matches;
+		}
+	}
+
+	if (1 != matches) {
+		error("Found %d jobs of type JOB_TYPE_JOIN instead of just one.", matches);
+		return -ESOMEFAULT;
+	}
+
+	return 0;
 }
 
 static int _send_response_join(struct spawn *spawn, int dest)
