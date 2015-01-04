@@ -46,6 +46,8 @@ struct plugin
  */
 struct plugin_ops
 {
+	/* FIXME init() and fini() are never called.
+	 */
 	/* FIXME Pass command line arguments/options as the
 	 *       second argument.
 	 */

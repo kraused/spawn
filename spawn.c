@@ -77,7 +77,6 @@ int spawn_ctor(struct spawn *self, struct alloc *alloc)
 	}
 
 	list_ctor(&self->jobs);
-	list_ctor(&self->tasks);
 
 	return 0;
 }
@@ -91,13 +90,6 @@ int spawn_dtor(struct spawn *self)
 		/* It is probably easiest just to go on and do nothing. If spawn_dtor()
 		 * is called the execution will terminate soon anyway and trying to
 		 * cleanup is probably a waste of effort.
-		 */
-	}
-
-	if (unlikely(!list_is_empty(&self->tasks))) {
-		error("List of tasks is not empty in spawn_dtor().");
-
-		/* FIXME Cancel running threads.
 		 */
 	}
 
@@ -127,7 +119,16 @@ int spawn_dtor(struct spawn *self)
 		}
 
 		err = ZFREE(self->alloc, (void **)&self->opts, 1,
-		            sizeof(struct optpool), "opts");
+		            sizeof(struct optpool), "");
+		if (unlikely(err)) {
+			fcallerror("ZFREE", err);
+			return err;
+		}
+	}
+
+	if (self->procs) {
+		err = ZFREE(self->alloc, (void **)&self->procs, self->nprocs,
+		            sizeof(struct process), "");
 		if (unlikely(err)) {
 			fcallerror("ZFREE", err);
 			return err;

@@ -5,6 +5,7 @@
 #include "list.h"
 
 struct spawn;
+struct task;
 
 
 /*
@@ -15,7 +16,8 @@ enum
 	JOB_TYPE_NOOP		= 0,
 	JOB_TYPE_BUILD_TREE,
 	JOB_TYPE_JOIN,
-	JOB_TYPE_TASK
+	JOB_TYPE_TASK,
+	JOB_TYPE_EXIT
 };
 
 /*
@@ -46,7 +48,6 @@ struct job_build_tree_child
 	int	id;	/* Participant id */
 	int	host;
 	int	nhosts;
-	int	port;
 	enum {
 		UNBORN,
 		UNKNOWN,
@@ -104,6 +105,36 @@ struct job_task
 
 	char		*path;
 	ui16		channel;
+	char		**argv;
+
+	struct task	*task;
+
+	int		acks;	/* Number of responses received from
+				 * children.
+				 */
+
+	int		phase;
+};
+
+/*
+ * Task for terminating the program.
+ */
+struct job_exit
+{
+	struct job	job;
+
+	/* In order to avoid hangs during program termination the process
+	 * is forced to quit immediately if the job keeps in the list for
+	 * too long.
+	 */
+	struct timespec	start;
+	struct timespec	timeout;
+
+	int		acks;	/* Number of responses received from
+				 * children.
+				 */
+
+	int		phase;
 };
 
 /*
@@ -124,6 +155,12 @@ int alloc_job_join(struct alloc *alloc, int parent, struct job **self);
  */
 int alloc_job_task(struct alloc *alloc, const char* path,
                    ui16 channel, struct job **self);
+
+/*
+ * Allocate a struct job_exit on the heap and call the constructor.
+ */
+int alloc_job_exit(struct alloc *alloc, const struct timespec *timeout,
+                   struct job **self);
 
 /*
  * Destroy and free a heap allocated job structure.

@@ -27,7 +27,9 @@ enum
 	MESSAGE_TYPE_REQUEST_BUILD_TREE,
 	MESSAGE_TYPE_RESPONSE_BUILD_TREE,
 	MESSAGE_TYPE_REQUEST_TASK,
-	MESSAGE_TYPE_EXIT,
+	MESSAGE_TYPE_RESPONSE_TASK,
+	MESSAGE_TYPE_REQUEST_EXIT,
+	MESSAGE_TYPE_RESPONSE_EXIT,
 };
 
 /*
@@ -67,10 +69,10 @@ struct __attribute__((packed)) message_header
 
 struct message_request_join
 {
-	ui32	pid;		/* Process id. 32-bit should be enough on any
-				 * platform I am aware of. */
-	ui32	ip;		/* IPv4 address */
-	ui32	portnum;	/* TCP port */
+	ui32		pid;		/* Process id. 32-bit should be enough on any
+					 * platform I am aware of. */
+	ui32		ip;		/* IPv4 address */
+	ui32		portnum;	/* TCP port */
 };
 
 struct message_response_join
@@ -82,7 +84,7 @@ struct message_response_join
 
 struct message_ping
 {
-	ui64	now;
+	ui64		now;
 };
 
 struct message_request_exec
@@ -94,13 +96,13 @@ struct message_request_exec
 
 struct message_request_build_tree
 {
-	ui64	nhosts;
-	si32	*hosts;
+	ui64		nhosts;
+	si32		*hosts;
 };
 
 struct message_response_build_tree
 {
-	ui32	deads;
+	ui32		deads;
 };
 
 struct message_request_task
@@ -109,9 +111,19 @@ struct message_request_task
 	ui32		channel;
 };
 
-struct message_exit
+struct message_response_task
 {
-	ui32	signum;
+	ui32		ret;
+};
+
+struct message_request_exit
+{
+	ui32		signum;
+};
+
+struct message_response_exit
+{
+	ui32		dummy;
 };
 
 /*

@@ -19,6 +19,26 @@ struct exec_plugin;
 
 
 /*
+ * Record of a remote (child) process.
+ */
+struct process
+{
+	int	id;	/* Network participant id. Subtract one to get the
+			 * offset into the hosts array.
+			 */
+	ll	pid;
+	/* Remote address information.
+	 */
+	struct {
+		ui32	ip;
+		ui32	portnum;
+	}	addr;
+	int	port;	/* Port through which the child process is
+			 * reachable.
+			 */
+};
+
+/*
  * Main data structure that stores everything required by the program.
  */
 struct spawn
@@ -42,16 +62,15 @@ struct spawn
 
 	struct network		tree;
 
+	int			nprocs;
+	struct process		*procs;
+
 	struct comm		comm;
 	struct buffer_pool	bufpool;
 
 	/* List of jobs to be executed. See loop() in loop.c.
 	 */
 	struct list		jobs;
-
-	/* List of tasks.
-	 */
-	struct list		tasks;
 
 	struct exec_plugin	*exec;
 	struct exec_worker_pool	*wkpool;

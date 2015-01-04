@@ -63,12 +63,25 @@ static int _unpack_message_request_task(struct buffer *buffer,
                                         struct message_request_task *msg);
 static int _free_message_request_task(struct alloc *alloc,
                                       const struct message_request_task *msg);
-static int _pack_message_exit(struct buffer *buffer,
-                              const struct message_exit *msg);
-static int _unpack_message_exit(struct buffer *buffer,
-                                struct message_exit *msg);
-static int _free_message_exit(struct alloc *alloc,
-                              const struct message_exit *msg);
+static int _pack_message_response_task(struct buffer *buffer,
+                                      const struct message_response_task *msg);
+static int _unpack_message_response_task(struct buffer *buffer,
+                                        struct alloc *alloc,
+                                        struct message_response_task *msg);
+static int _free_message_response_task(struct alloc *alloc,
+                                      const struct message_response_task *msg);
+static int _pack_message_request_exit(struct buffer *buffer,
+                                      const struct message_request_exit *msg);
+static int _unpack_message_request_exit(struct buffer *buffer,
+                                        struct message_request_exit *msg);
+static int _free_message_request_exit(struct alloc *alloc,
+                                      const struct message_request_exit *msg);
+static int _pack_message_response_exit(struct buffer *buffer,
+                                       const struct message_response_exit *msg);
+static int _unpack_message_response_exit(struct buffer *buffer,
+                                         struct message_response_exit *msg);
+static int _free_message_response_exit(struct alloc *alloc,
+                                       const struct message_response_exit *msg);
 
 
 int pack_message_header(struct buffer *buffer,
@@ -243,9 +256,17 @@ static int _pack_message_something(struct buffer *buffer, int type, void *msg)
 		err = _pack_message_request_task(buffer,
 		                    (const struct message_request_task *)msg);
 		break;
-	case MESSAGE_TYPE_EXIT:
-		err = _pack_message_exit(buffer,
-		                    (const struct message_exit *)msg);
+	case MESSAGE_TYPE_RESPONSE_TASK:
+		err = _pack_message_response_task(buffer,
+		                    (const struct message_response_task *)msg);
+		break;
+	case MESSAGE_TYPE_REQUEST_EXIT:
+		err = _pack_message_request_exit(buffer,
+		                    (const struct message_request_exit *)msg);
+		break;
+	case MESSAGE_TYPE_RESPONSE_EXIT:
+		err = _pack_message_response_exit(buffer,
+		                    (const struct message_response_exit *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -293,9 +314,17 @@ static int _alloc_message_something(struct alloc *alloc, int type, void **msg)
 		err = ZALLOC(alloc, msg, 1, sizeof(struct message_request_task),
 		             "struct message_request_task");
 		break;
-	case MESSAGE_TYPE_EXIT:
-		err = ZALLOC(alloc, msg, 1, sizeof(struct message_exit),
-		             "struct message_exit");
+	case MESSAGE_TYPE_RESPONSE_TASK:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_response_task),
+		             "struct message_response_task");
+		break;
+	case MESSAGE_TYPE_REQUEST_EXIT:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_request_exit),
+		             "struct message_request_exit");
+		break;
+	case MESSAGE_TYPE_RESPONSE_EXIT:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_response_exit),
+		             "struct message_response_exit");
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -346,9 +375,17 @@ static int _unpack_message_something(struct buffer *buffer, struct alloc *alloc,
 		err = _unpack_message_request_task(buffer, alloc,
 		                    (struct message_request_task *)msg);
 		break;
-	case MESSAGE_TYPE_EXIT:
-		err = _unpack_message_exit(buffer,
-		                    (struct message_exit *)msg);
+	case MESSAGE_TYPE_RESPONSE_TASK:
+		err = _unpack_message_response_task(buffer, alloc,
+		                    (struct message_response_task *)msg);
+		break;
+	case MESSAGE_TYPE_REQUEST_EXIT:
+		err = _unpack_message_request_exit(buffer,
+		                    (struct message_request_exit *)msg);
+		break;
+	case MESSAGE_TYPE_RESPONSE_EXIT:
+		err = _unpack_message_response_exit(buffer,
+		                    (struct message_response_exit *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -396,9 +433,17 @@ static int _free_message_something(struct alloc *alloc, int type, void *msg)
 		err = _free_message_request_task(alloc,
 		                    (struct message_request_task *)msg);
 		break;
-	case MESSAGE_TYPE_EXIT:
-		err = _free_message_exit(alloc,
-		                    (struct message_exit *)msg);
+	case MESSAGE_TYPE_RESPONSE_TASK:
+		err = _free_message_response_task(alloc,
+		                    (struct message_response_task *)msg);
+		break;
+	case MESSAGE_TYPE_REQUEST_EXIT:
+		err = _free_message_request_exit(alloc,
+		                    (struct message_request_exit *)msg);
+		break;
+	case MESSAGE_TYPE_RESPONSE_EXIT:
+		err = _free_message_response_exit(alloc,
+		                    (struct message_response_exit *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -733,8 +778,39 @@ static int _free_message_request_task(struct alloc *alloc,
 	return 0;
 }
 
-static int _pack_message_exit(struct buffer *buffer,
-                              const struct message_exit *msg)
+static int _pack_message_response_task(struct buffer *buffer,
+                                       const struct message_response_task *msg)
+{
+	int err;
+
+	err = buffer_pack_ui32(buffer, &msg->ret, 1);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _unpack_message_response_task(struct buffer *buffer,
+                                         struct alloc *alloc,
+                                         struct message_response_task *msg)
+{
+	int err;
+
+	err = buffer_unpack_ui32(buffer, &msg->ret, 1);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _free_message_response_task(struct alloc *alloc,
+                                       const struct message_response_task *msg)
+{
+	return 0;
+}
+
+static int _pack_message_request_exit(struct buffer *buffer,
+                                      const struct message_request_exit *msg)
 {
 	int err;
 
@@ -745,8 +821,8 @@ static int _pack_message_exit(struct buffer *buffer,
 	return 0;
 }
 
-static int _unpack_message_exit(struct buffer *buffer,
-                                struct message_exit *msg)
+static int _unpack_message_request_exit(struct buffer *buffer,
+                                        struct message_request_exit *msg)
 {
 	int err;
 
@@ -757,8 +833,38 @@ static int _unpack_message_exit(struct buffer *buffer,
 	return 0;
 }
 
-static int _free_message_exit(struct alloc *alloc,
-                              const struct message_exit *msg)
+static int _free_message_request_exit(struct alloc *alloc,
+                                      const struct message_request_exit *msg)
+{
+	return 0;
+}
+
+static int _pack_message_response_exit(struct buffer *buffer,
+                                       const struct message_response_exit *msg)
+{
+	int err;
+
+	err = buffer_pack_ui32(buffer, &msg->dummy, 1);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _unpack_message_response_exit(struct buffer *buffer,
+                                         struct message_response_exit *msg)
+{
+	int err;
+
+	err = buffer_unpack_ui32(buffer, &msg->dummy, 1);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _free_message_response_exit(struct alloc *alloc,
+                                       const struct message_response_exit *msg)
 {
 	return 0;
 }

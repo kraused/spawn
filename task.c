@@ -41,8 +41,6 @@ int task_ctor(struct task *self, struct alloc *alloc,
 		return err;
 	}
 
-	list_ctor(&self->list);
-
 	return 0;
 }
 

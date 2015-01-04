@@ -41,6 +41,14 @@ static int _job_task_dtor(struct job_task *self);
 static int _free_job_task(struct alloc *alloc, struct job_task **self);
 static int _task_work(struct job *job, struct spawn *spawn, int *completed);
 static int _task_send_request(struct spawn *spawn, const char *path, ui16 channel);
+static int _task_send_response(struct spawn *spawn, int ret);
+static int _job_exit_ctor(struct job_exit *self, struct alloc *alloc,
+                          const struct timespec *timeout);
+static int _job_exit_dtor(struct job_exit *self);
+static int _free_job_exit(struct alloc *alloc, struct job_exit **self);
+static int _exit_work(struct job *job, struct spawn *spawn, int *completed);
+static int _exit_send_request(struct spawn *spawn);
+static int _exit_send_response(struct spawn *spawn);
 static int _sockaddr(int fd, ui32 *ip, ui32 *portnum);
 static int _prepare_task_job(struct spawn *spawn);
 
@@ -90,6 +98,21 @@ int alloc_job_task(struct alloc *alloc, const char* path,
 	return _job_task_ctor((struct job_task *)*self, alloc, path, channel);
 }
 
+int alloc_job_exit(struct alloc *alloc, const struct timespec *timeout,
+                   struct job **self)
+{
+	int err;
+
+	err = ZALLOC(alloc, (void **)self, 1,
+	             sizeof(struct job_exit), "struct job_exit");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		return err;
+	}
+
+	return _job_exit_ctor((struct job_exit *)*self, alloc, timeout);
+}
+
 int free_job(struct job **self)
 {
 	int err;
@@ -105,7 +128,11 @@ int free_job(struct job **self)
 		break;
 	case JOB_TYPE_TASK:
 		err = _free_job_task((*self)->alloc,
-		                            (struct job_task **)self);
+		                     (struct job_task **)self);
+		break;
+	case JOB_TYPE_EXIT:
+		err = _free_job_exit((*self)->alloc,
+		                     (struct job_exit **)self);
 		break;
 	default:
 		error("Unknown job type %d.", (*self)->type);
@@ -176,7 +203,6 @@ static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc
 		self->children[i].nhosts  = quot - 1;
 		self->children[i].id      = spawn->tree.here + 1 + quot*i;
 		self->children[i].state   = UNBORN;
-		self->children[i].port    = -1;
 		self->children[i].spawned = 0;
 	}
 
@@ -580,6 +606,10 @@ static int _job_task_ctor(struct job_task *self, struct alloc *alloc,
 	}
 
 	self->channel = channel;
+	self->argv    = NULL;	/* FIXME */
+	self->task    = NULL;
+	self->phase   = 1;
+	self->acks    = 0;
 
 	list_ctor(&self->job.list);
 
@@ -620,38 +650,82 @@ static int _free_job_task(struct alloc *alloc, struct job_task **self)
 static int _task_work(struct job *job, struct spawn *spawn, int *completed)
 {
 	int err;
+	int ret;
 	struct job_task *self = (struct job_task *)job;
-	struct task *task;
 
-	/* Either it works or it does not.
+	/* Phase 1: Start the task
 	 */
-	*completed = 1;
+	if (1 == self->phase) {
+		if (0 == spawn->tree.here) {
+			err = _task_send_request(spawn, self->path, self->channel);
+			if (unlikely(err))
+				fcallerror("_task_send_request", err);
+		}
 
-	if (0 == spawn->tree.here) {
-		err = _task_send_request(spawn, self->path, self->channel);
-		if (unlikely(err))
-			fcallerror("_task_send_request", err);
+		err = ZALLOC(spawn->alloc, (void **)&self->task,
+		             1, sizeof(struct task), "");
+		if (unlikely(err)) {
+			fcallerror("ZALLOC", err);
+			return err;
+		}
+
+		err = task_ctor(self->task, spawn->alloc, spawn,
+		                self->path, self->channel);
+		if (unlikely(err)) {
+			fcallerror("task_ctor", err);
+			return err;
+		}
+
+		err = task_start(self->task);
+		if (unlikely(err)) {
+			fcallerror("task_start", err);
+			return err;
+		}
+
+		self->phase = 2;
 	}
 
-	err = ZALLOC(spawn->alloc, (void **)&task,
-	             1, sizeof(struct task), "");
-	if (unlikely(err)) {
-		fcallerror("ZALLOC", err);
-		return err;
+	/* Phase 2: Wait for the local task to finish.
+	 */
+	if (2 == self->phase) {
+		if (task_is_done(self->task)) {
+			self->phase = 3;
+
+			err = task_thread_join(self->task);
+			if (unlikely(err))
+				fcallerror("task_thread_join", err);
+
+			ret = task_exit_code(self->task);
+
+			log("Task finished with exit code %d.", ret);
+
+			err = task_dtor(self->task);
+			if (unlikely(err))
+				fcallerror("task_dtor", err);
+
+			err = ZFREE(spawn->alloc, (void **)&self->task,
+			             1, sizeof(struct task), "");
+			if (unlikely(err)) {
+				fcallerror("ZFREE", err);
+				return err;
+			}
+
+			err = _task_send_response(spawn, ret);
+			if (unlikely(err)) {
+				fcallerror("_task_send_response", err);
+				return err;
+			}
+		}
 	}
 
-	err = task_ctor(task, spawn->alloc, spawn, self->path, self->channel);
-	if (unlikely(err)) {
-		fcallerror("task_ctor", err);
-		return err;
-	}
+	/* Phase 3: Wait for the tasks executed by children
+	 */
+	if (3 == self->phase) {
+		if (spawn->nprocs == self->acks) {
+			*completed = 1;
 
-	list_insert_before(&spawn->tasks, &task->list);
-
-	err = task_start(task);
-	if (unlikely(err)) {
-		fcallerror("task_start", err);
-		return err;
+			log("All children finished executing the task.");
+		}
 	}
 
 	return 0;
@@ -672,6 +746,165 @@ static int _task_send_request(struct spawn *spawn, const char *path, ui16 channe
 
 	msg.path    = path;
 	msg.channel = channel;
+
+	err = spawn_send_message(spawn, &header, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("spawn_send_message", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static int _task_send_response(struct spawn *spawn, int ret)
+{
+	int err;
+	struct message_header        header;
+	struct message_response_task msg;
+
+	if (-1 == spawn->parent)
+		return 0;
+
+	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
+
+	header.src   = spawn->tree.here;	/* Always the same */
+	header.dst   = spawn->parent;
+	header.flags = MESSAGE_FLAG_UCAST;
+	header.type  = MESSAGE_TYPE_RESPONSE_TASK;
+
+	msg.ret = ret;
+
+	err = spawn_send_message(spawn, &header, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("spawn_send_message", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static int _job_exit_ctor(struct job_exit *self, struct alloc *alloc,
+                          const struct timespec *timeout)
+{
+	self->job.alloc = alloc;
+	self->job.type  = JOB_TYPE_EXIT;
+	self->job.work  = _exit_work;
+
+	self->acks    = 0;
+	self->timeout = *timeout;
+	self->phase   = 1;
+
+	list_ctor(&self->job.list);
+
+	return 0;
+}
+
+static int _job_exit_dtor(struct job_exit *self)
+{
+	return 0;
+}
+
+static int _free_job_exit(struct alloc *alloc, struct job_exit **self)
+{
+	int err;
+
+	err = _job_exit_dtor(*self);
+	if (unlikely(err))
+		fcallerror("_job_exit_dtor", err);
+
+	err = ZFREE(alloc, (void **)self, 1,
+	            sizeof(struct job_exit), "");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static int _exit_work(struct job *job, struct spawn *spawn, int *completed)
+{
+	int err;
+	struct job_exit *self = (struct job_exit *)job;
+
+	if (1 == self->phase) {
+		/* Instead of sending the REQUEST_EXIT from node to node
+		 * it is easier to let the master process broadcast the
+		 * message. The master process is anyway the only process
+		 * allowed to request an exit.
+		 */
+		if (0 == spawn->tree.here) {
+			err = _exit_send_request(spawn);
+			if (unlikely(err))
+				fcallerror("_exit_send_request", err);
+		}
+
+		self->phase = 2;
+	}
+
+	if (2 == self->phase) {
+		/* FIXME Check the timeout!
+		 */
+
+		if (spawn->nprocs == self->acks) {
+			*completed = 1;
+
+			log("All children exited.");
+
+			err = _exit_send_response(spawn);
+			if (unlikely(err))
+				fcallerror("_exit_send_response", err);
+
+			err = spawn_comm_flush(spawn);
+			if (unlikely(err))
+				fcallerror("spawn_comm_flush", err);
+			exit(err);	/* FIXME Make this more graceful.
+					 */
+		}
+	}
+
+	return 0;
+}
+
+static int _exit_send_request(struct spawn *spawn)
+{
+	int err;
+	struct message_header       header;
+	struct message_request_exit msg;
+
+	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
+
+	header.src   = spawn->tree.here;	/* Always the same */
+	header.flags = MESSAGE_FLAG_BCAST;
+	header.type  = MESSAGE_TYPE_REQUEST_EXIT;
+
+	err = spawn_send_message(spawn, &header, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("spawn_send_message", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static int _exit_send_response(struct spawn *spawn)
+{
+	int err;
+	struct message_header        header;
+	struct message_response_exit msg;
+
+	if (-1 == spawn->parent)
+		return 0;
+
+	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
+
+	header.src   = spawn->tree.here;	/* Always the same */
+	header.dst   = spawn->parent;
+	header.flags = MESSAGE_FLAG_UCAST;
+	header.type  = MESSAGE_TYPE_RESPONSE_EXIT;
 
 	err = spawn_send_message(spawn, &header, (void *)&msg);
 	if (unlikely(err)) {

@@ -18,8 +18,6 @@ struct task
 	struct task_plugin	*plu;
 	struct thread		thread;
 
-	struct list		list;
-
 	/* Communication channel allocated for this task.
 	 */
 	int			channel;
@@ -42,6 +40,30 @@ int task_start(struct task *self);
  * Cancel the task.
  */
 int task_cancel(struct task *self);
+
+/*
+ * Check if the task finished by itself.
+ */
+static inline int task_is_done(struct task *self)
+{
+	return thread_is_done(&self->thread);
+}
+
+/*
+ * Join the thread running the task main routine.
+ */
+static inline int task_thread_join(struct task *self)
+{
+	return thread_join(&self->thread);
+}
+
+/*
+ * Exit code of the task thread. Can be called after task_thread_join().
+ */
+static inline int task_exit_code(struct task *self)
+{
+	return self->thread.err;
+}
 
 #endif
 

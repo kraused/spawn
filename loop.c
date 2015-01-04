@@ -34,6 +34,14 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer);
 static int _handle_jobs(struct spawn *spawn);
 static int _handle_request_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static struct job_build_tree *_find_job_build_tree(struct spawn *spawn);
+static int _insert_process_in_struct_spawn(struct spawn *spawn,
+                                           struct job_build_tree *job,
+                                           struct message_header *header,
+                                           struct message_request_join *msg,
+                                           int port);
+static int _alloc_process_list_in_struct_spawn(struct spawn *spawn,
+                                               struct job_build_tree *job);
+static struct process *_find_spawned_process_by_id(struct spawn *spawn, int id);
 static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _set_job_join_acked(struct spawn *spawn);
 static int _send_response_join(struct spawn *spawn, int dest);
@@ -46,18 +54,21 @@ static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
 static int _handle_request_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_response_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_request_task(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
-static int _handle_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_response_task(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static struct job_task *_find_job_task(struct spawn *spawn);
+static int _handle_request_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_response_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static struct job_exit *_find_job_exit(struct spawn *spawn);
 static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum);
 static int _fix_lft(struct spawn *spawn, int port, int *ids, int nids);
 static int _peeraddr(int fd, ui32 *ip, ui32 *portnum);
 static struct job_build_tree_child *_find_child_by_id(struct job_build_tree *job, int id);
 static int _declare_child_alive(struct job_build_tree *job, int id);
 static int _declare_child_ready(struct job_build_tree *job, int id);
-static int _set_child_port(struct job_build_tree *job, int id, int port);
 static void _sighandler(int signum);
 static int _install_sighandler();
 static int _quit(struct spawn *spawn);
-static int _send_exit(struct spawn *spawn);
+static struct job *_find_one_and_only_job(struct spawn *spawn, int type);
 
 static int _finished = 0;
 static int _sigrecvd = 0;
@@ -70,21 +81,32 @@ int loop(struct spawn *spawn)
 	struct buffer *buffer;
 	struct timespec ts;
 
-	err = _install_sighandler();
-	if (unlikely(err)) {
-		fcallerror("_install_sighandler", err);
-		die();
+	/* FIXME What kind of signal handling do we want to do
+	 *       for the remote processes?
+	 */
+
+	if (0 == spawn->tree.here) {
+		err = _install_sighandler();
+		if (unlikely(err)) {
+			fcallerror("_install_sighandler", err);
+			die();
+		}
 	}
 
 	_ping(spawn, 60);	/* First time nothing is send. */
 
 	while (1) {
-		if (_finished) {
-			err = _quit(spawn);
-			if(unlikely(err))
-				fcallerror("_quit", err);
+		if (0 == spawn->tree.here) {
+			if (list_is_empty(&spawn->jobs))
+				_finished = 1;
 
-			break;
+			if (1 == _finished) {
+				err = _quit(spawn);
+				if(unlikely(err))
+					fcallerror("_quit", err);
+
+				_finished = 2;
+			}
 		}
 
 		err = _handle_jobs(spawn);
@@ -148,14 +170,6 @@ int loop(struct spawn *spawn)
 				die();	/* FIXME */
 			}
 		}
-
-		/* FIXME
-		 * Check tasks for termination
-		 */
-
-		/* FIXME
-		 * Terminate if there are no jobs left and no tasks running.
-		 */
 	}
 
 	return 0;
@@ -323,8 +337,14 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 	case MESSAGE_TYPE_REQUEST_TASK:
 		err = _handle_request_task(spawn, &header, buffer);
 		break;
-	case MESSAGE_TYPE_EXIT:
-		err = _handle_exit(spawn, &header, buffer);
+	case MESSAGE_TYPE_RESPONSE_TASK:
+		err = _handle_response_task(spawn, &header, buffer);
+		break;
+	case MESSAGE_TYPE_REQUEST_EXIT:
+		err = _handle_request_exit(spawn, &header, buffer);
+		break;
+	case MESSAGE_TYPE_RESPONSE_EXIT:
+		err = _handle_response_exit(spawn, &header, buffer);
 		break;
 	default:
 		error("Dropping unexpected message of type %d from %d.", header.type, header.src);
@@ -409,13 +429,13 @@ static int _handle_request_join(struct spawn *spawn, struct message_header *head
 	if (unlikely(!job))
 		goto fail;
 
-	err = _set_child_port(job, header->src, port);
+	err = _insert_process_in_struct_spawn(spawn, job, header, &msg, port);
 	if (unlikely(err)) {
-		fcallerror("_set_child_port", err);
+		fcallerror("_insert_process_in_struct_spawn", err);
 		goto fail;
 	}
 
-	debug("Routing messages to %d via port %d.", dest, port);
+	debug("Routing messages to %2d via port %2d.", dest, port);
 
 	err = _fix_lft(spawn, port, &dest, 1);
 	if (unlikely(err)) {
@@ -453,28 +473,79 @@ fail:
 
 static struct job_build_tree *_find_job_build_tree(struct spawn *spawn)
 {
-	int matches;
-	struct list *p;
-	struct job *job;
-	struct job *ret;
+	return (struct job_build_tree *)_find_one_and_only_job(spawn, JOB_TYPE_BUILD_TREE);
+}
 
-	matches = 0;
+static int _insert_process_in_struct_spawn(struct spawn *spawn,
+                                           struct job_build_tree *job,
+                                           struct message_header *header,
+                                           struct message_request_join *msg,
+                                           int port)
+{
+	int err;
+	struct process *p;
 
-	LIST_FOREACH(p, &spawn->jobs) {
-		job = LIST_ENTRY(p, struct job, list);
-
-		if (JOB_TYPE_BUILD_TREE == job->type) {
-			ret = job;
-			++matches;
+	if (0 == spawn->nprocs) {
+		err = _alloc_process_list_in_struct_spawn(spawn, job);
+		if (unlikely(err)) {
+			fcallerror("_alloc_process_list_in_struct_spawn", err);
+			die();	/* No reasonable way to continue.
+				 */
 		}
 	}
 
-	if (1 != matches) {
-		error("Found %d jobs of type JOB_TYPE_JOIN instead of just one.", matches);
-		ret = NULL;
+	p = _find_spawned_process_by_id(spawn, header->src);
+	if (unlikely(!p)) {
+		error("_find_spawned_process_by_id() returned NULL.");
+		return -ESOMEFAULT;
 	}
 
-	return (struct job_build_tree *)ret;
+	p->pid  = msg->pid;
+	p->port = port;
+	p->addr.ip      = msg->ip;
+	p->addr.portnum = msg->portnum;
+
+	return 0;
+}
+
+static int _alloc_process_list_in_struct_spawn(struct spawn *spawn,
+                                               struct job_build_tree *job)
+{
+	int err;
+	int i;
+
+	/* TODO This is only correct if we do not have any dead hosts.
+	 */
+	spawn->nprocs = job->nchildren;
+
+	err = ZALLOC(spawn->alloc, (void **)&spawn->procs, spawn->nprocs,
+	             sizeof(struct process), "procs");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		return err;
+	}
+
+	for (i = 0; i < spawn->nprocs; ++i) {
+		spawn->procs[i].id   = job->children[i].id;
+		spawn->procs[i].port = -1;
+	}
+
+	return 0;
+}
+
+static struct process *_find_spawned_process_by_id(struct spawn *spawn, int id)
+{
+	int i;
+	struct process *p;
+
+	p = NULL;
+	for (i = 0; i < spawn->nprocs; ++i)
+		if (spawn->procs[i].id == id) {
+			p = &spawn->procs[i];
+			break;
+		}
+
+	return p;
 }
 
 static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
@@ -718,6 +789,7 @@ static int _handle_response_build_tree(struct spawn *spawn, struct message_heade
 	struct job_build_tree *job;
 	struct message_response_build_tree msg;
 	int i;
+	struct process *p;
 	struct job_build_tree_child *child;
 	si32 *ids;
 
@@ -737,13 +809,19 @@ static int _handle_response_build_tree(struct spawn *spawn, struct message_heade
 		goto fail;
 	}
 
+	p = _find_spawned_process_by_id(spawn, header->src);
+	if (unlikely(!p)) {
+		error("_find_process_by_id() returned NULL");
+		goto fail;
+	}
+	if (unlikely(p->port < 0)) {
+		error("Port is negative.");
+		goto fail;
+	}
+
 	child = _find_child_by_id(job, header->src);
 	if (unlikely(!child)) {
 		error("_find_child_by_id() returned NULL");
-		goto fail;
-	}
-	if (unlikely(child->port < 0)) {
-		error("Port is negative.");
 		goto fail;
 	}
 
@@ -752,14 +830,14 @@ static int _handle_response_build_tree(struct spawn *spawn, struct message_heade
 	ids = job->hosts + child->host + 1;
 
 	for (i = 0; i < child->nhosts; ++i)
-		debug("Routing messages to %d via port %d.", ids[i] + 1, child->port);
+		debug("Routing messages to %2d via port %2d.", ids[i] + 1, p->port);
 
 	/* The root process is not accounted for in the host list in struct spawn
 	 * so we need to add +1 to map from the host id to the network participant id.
 	 */
 	for (i = 0; i < child->nhosts; ++i)
 		ids[i]++;
-	err = _fix_lft(spawn, child->port, ids, child->nhosts);
+	err = _fix_lft(spawn, p->port, ids, child->nhosts);
 	for (i = 0; i < child->nhosts; ++i)
 		ids[i]--;
 
@@ -820,13 +898,124 @@ fail:
 	return err;
 }
 
-static int _handle_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+static int _handle_response_task(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
 {
-	_finished = 2;
+	int err, tmp;
+	struct message_response_task msg;
+	struct job_task *job;
 
-	debug("Received exit message.");
+	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		die();	/* FIXME ?*/
+	}
+
+	job = _find_job_task(spawn);
+	if (unlikely(!job))
+		goto fail;
+
+	job->acks += 1;
+
+	err = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("free_message_payload", err);
+		return err;
+	}
 
 	return 0;
+
+fail:
+	tmp = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(tmp))
+		fcallerror("free_message_payload", tmp);
+
+	return err;
+}
+
+static struct job_task *_find_job_task(struct spawn *spawn)
+{
+	return (struct job_task *)_find_one_and_only_job(spawn, JOB_TYPE_TASK);
+}
+
+static int _handle_request_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	int err, tmp;
+	struct message_request_exit msg;
+	struct job *job;
+	struct timespec timeout;
+
+	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		die();	/* FIXME ?*/
+	}
+
+	/* FIXME Read from configuration
+	 */
+	timeout.tv_sec  = 3;
+	timeout.tv_nsec = 0;
+
+	err = alloc_job_exit(spawn->alloc, &timeout, &job);
+	if (unlikely(err)) {
+		fcallerror("alloc_job_exit", err);
+		goto fail;
+	}
+
+	list_insert_before(&spawn->jobs, &job->list);
+
+	err = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("free_message_payload", err);
+		return err;
+	}
+
+	return 0;
+
+fail:
+	tmp = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(tmp))
+		fcallerror("free_message_payload", tmp);
+
+	return err;
+}
+
+static int _handle_response_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	int err, tmp;
+	struct message_response_exit msg;
+	struct job_exit *job;
+
+	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		die();	/* FIXME ?*/
+	}
+
+	job = _find_job_exit(spawn);
+	if (unlikely(!job))
+		goto fail;
+
+	job->acks += 1;
+
+	err = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("free_message_payload", err);
+		return err;
+	}
+
+	return 0;
+
+fail:
+	tmp = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(tmp))
+		fcallerror("free_message_payload", tmp);
+
+	return err;
+}
+
+static struct job_exit *_find_job_exit(struct spawn *spawn)
+{
+	return (struct job_exit *)_find_one_and_only_job(spawn, JOB_TYPE_EXIT);
 }
 
 static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum)
@@ -965,23 +1154,17 @@ static int _declare_child_ready(struct job_build_tree *job, int id)
 	return 0;
 }
 
-static int _set_child_port(struct job_build_tree *job, int id, int port)
-{
-	struct job_build_tree_child *child;
-
-	child = _find_child_by_id(job, id);
-	if (unlikely(!child))
-		return -ESOMEFAULT;
-
-	child->port = port;
-
-	return 0;
-}
-
 static void _sighandler(int signum)
 {
-	_finished = 1;
-	_sigrecvd = signum;
+	/* Ignore subsequent signals. Only the first one counts.
+	 */
+	if (1 == _finished) {
+		_finished = 2;
+	}
+	if (0 == _finished) {
+		_finished = 1;
+		_sigrecvd = signum;
+	}
 }
 
 static int _install_sighandler()
@@ -1005,43 +1188,48 @@ static int _install_sighandler()
 static int _quit(struct spawn *spawn)
 {
 	int err;
+	struct job *job;
+	struct timespec timeout;
 
-	if (1 == _finished) {
-		err = _send_exit(spawn);
-		if (unlikely(err))
-			return err;
-	}
+	/* FIXME Read from configuration
+	 */
+	timeout.tv_sec  = 3;
+	timeout.tv_nsec = 0;
 
-	err = spawn_comm_flush(spawn);
+	err = alloc_job_exit(spawn->alloc, &timeout, &job);
 	if (unlikely(err)) {
-		fcallerror("spawn_comm_flush", err);
+		fcallerror("alloc_job_exit", err);
 		return err;
 	}
+
+	list_insert_before(&spawn->jobs, &job->list);
 
 	return 0;
 }
 
-static int _send_exit(struct spawn *spawn)
+static struct job *_find_one_and_only_job(struct spawn *spawn, int type)
 {
-	int err;
-	struct message_header   header;
-	struct message_exit 	msg;
+	int matches;
+	struct list *p;
+	struct job *job;
+	struct job *ret;
 
-	memset(&header, 0, sizeof(header));
-	memset(&msg   , 0, sizeof(msg));
+	matches = 0;
 
-	header.src   = spawn->tree.here;	/* Always the same */
-	header.flags = MESSAGE_FLAG_BCAST;
-	header.type  = MESSAGE_TYPE_EXIT;
+	LIST_FOREACH(p, &spawn->jobs) {
+		job = LIST_ENTRY(p, struct job, list);
 
-	debug("Sending exit message.");
-
-	err = spawn_send_message(spawn, &header, (void *)&msg);
-	if (unlikely(err)) {
-		fcallerror("spawn_send_message", err);
-		return err;
+		if (type == job->type) {
+			ret = job;
+			++matches;
+		}
 	}
 
-	return 0;
+	if (1 != matches) {
+		error("Found %d jobs of type %d instead of just one.", matches, type);
+		ret = NULL;
+	}
+
+	return ret;
 }
 
