@@ -59,6 +59,13 @@ int exec_worker_pool_ctor(struct exec_worker_pool *self, struct alloc *alloc,
 		}
 	}
 
+	/* FIXME Variable timeout value. The timeout value
+	 *       determines how long it takes to stop the
+	 *       threads.
+	 */
+	self->timeout.tv_sec  = 0;
+	self->timeout.tv_nsec = 1000L*1000L;	/* Millisecond */
+
 	return 0;
 
 fail3:
@@ -147,9 +154,11 @@ int exec_worker_pool_start(struct exec_worker_pool *self)
 int exec_worker_pool_stop(struct exec_worker_pool *self)
 {
 	atomic_write(self->done, 1);
-	while (!_all_threads_done(self));
-	/* TODO sched_yield() at this point?
+	/* A busy loop should be fine in this situation. We anyway only stop
+	 * the worker pool if the queues are empty and in that case the threads
+	 * will not utilize the CPU at all so we have some free cycles to spare.
 	 */
+	while (!_all_threads_done(self));
 
 	return 0;
 }
@@ -203,7 +212,7 @@ static int _thread_main(void *arg)
 	struct exec_worker_pool *self = (struct exec_worker_pool *)arg;
 	int err;
 	struct exec_work_item *wkitem;
-	struct timespec ts;
+	struct timespec abstime;
 
 	while (1) {
 		if (atomic_read(self->done))
@@ -215,23 +224,12 @@ static int _thread_main(void *arg)
 			die();
 		}
 
-		/* FIXME Move this into a helper function
-		 */
-		/* FIXME Variable timeout value. The timeout value
-		 *       determines how long it takes to stop the
-		 *       threads.
-		 */
-		clock_gettime(CLOCK_REALTIME, &ts);
-		ll d = 1000000;
-		if ((ts.tv_nsec + d) < 1000000000) {
-			ts.tv_nsec += d;
-		} else {
-			ts.tv_sec  += 1;
-			ts.tv_nsec = ts.tv_nsec + d - 1000000000;
-		}
+		err = abstime_near_future(&self->timeout, &abstime);
+		if (unlikely(err))
+			fcallerror("abstime_near_future", err);
 
 		while (!_work_available(self)) {
-			err = cond_var_timedwait(&self->cond, &ts);
+			err = cond_var_timedwait(&self->cond, &abstime);
 			if (-ETIMEDOUT == err)
 				break;
 			if (unlikely(err)) {
@@ -243,8 +241,10 @@ static int _thread_main(void *arg)
 		wkitem = NULL;
 
 		err = queue_dequeue(&self->queue, (void **)&wkitem);
-		if (unlikely(err && (-ENOENT != err)))
-			die();	/* FIXME */
+		if (unlikely(err && (-ENOENT != err))) {
+			fcallerror("queue_dequeue", err);
+			die();
+		}
 
 		err = cond_var_lock_release(&self->cond);
 		if (unlikely(err)) {

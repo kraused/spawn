@@ -39,6 +39,10 @@ struct exec_worker_pool
 	int			done;
 
 	struct exec_plugin	*exec;
+
+	/* Timeout value for cond_var_timedwait()
+	 */
+	struct timespec		timeout;
 };
 
 int exec_worker_pool_ctor(struct exec_worker_pool *self, struct alloc *alloc,
