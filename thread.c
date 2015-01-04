@@ -388,6 +388,8 @@ static void *_thread_main(void *arg)
 	atomic_write(self->err, err);	/* Before updating the state! */
 	atomic_write(self->state, THREAD_STATE_DONE);
 
+	log("Thread %d is done.", (int )gettid());
+
 	pthread_exit((void *)self);
 }
 
