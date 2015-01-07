@@ -4,6 +4,7 @@
 
 #include "ints.h"
 #include "thread.h"
+#include "hostinfo.h"
 #include "comm.h"
 #include "network.h"
 #include "pack.h"
@@ -44,6 +45,8 @@ struct process
 struct spawn
 {
 	struct alloc		*alloc;
+
+	struct hostinfo		hostinfo;
 
 	struct optpool		*opts;
 

@@ -43,6 +43,12 @@ int spawn_ctor(struct spawn *self, struct alloc *alloc)
 
 	self->alloc = alloc;
 
+	err = hostinfo_ctor(&self->hostinfo, self->alloc);
+	if (unlikely(err)) {
+		error("struct hostinfo constructor failed with error %d.", err);
+		return err;
+	}
+
 	/* Do not allocate and initialize the opts member here. In the context of the master
 	 * process the main function will allocate it (since we need to have the configuration
 	 * parameters available early in the program). In the context of the other processes
@@ -108,6 +114,12 @@ int spawn_dtor(struct spawn *self)
 	err = network_dtor(&self->tree);
 	if (unlikely(err)) {
 		error("struct network destructor failed with error %d.", err);
+		return err;
+	}
+	
+	err = hostinfo_dtor(&self->hostinfo);
+	if (unlikely(err)) {
+		error("struct hostinfo destructor failed with error %d.", err);
 		return err;
 	}
 
