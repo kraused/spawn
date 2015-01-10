@@ -50,10 +50,22 @@ int do_poll(struct pollfd *fds, int nfds, int timeout, int *num);
 int do_write(int fd, void *buf, ll size, ll *bytes);
 
 /*
+ * Call do_write() in a loop until size bytes are written. This function
+ * might block indefinitely.
+ */
+int do_write_loop(int fd, void *buf, ll size);
+
+/*
  * Wrapper around read() that handles EINTR. The number of bytes
  * read is returned as last argument.
  */
 int do_read(int fd, void *buf, ll size, ll *bytes);
+
+/*
+ * Call do_read() in a loop until size bytes are read. This function
+ * might block indefinitely.
+ */
+int do_read_loop(int fd, void *buf, ll size);
 
 /*
  * Our version of strdup which uses the allocator alloc.

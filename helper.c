@@ -147,6 +147,26 @@ int do_write(int fd, void *buf, ll size, ll *bytes)
 	return 0;
 }
 
+int do_write_loop(int fd, void *buf, ll size)
+{
+	int err;
+	ll bytes;
+
+	while (size > 0) {
+		err = do_write(fd, buf, size, &bytes);
+		if (unlikely(err))
+			return err;
+
+		if (unlikely(0 == bytes))
+			error("write() wrote zero bytes.");
+
+		buf  += bytes;
+		size -= bytes;
+	}
+
+	return 0;
+}
+
 int do_read(int fd, void *buf, ll size, ll *bytes)
 {
 	ll x;
@@ -165,6 +185,26 @@ int do_read(int fd, void *buf, ll size, ll *bytes)
 		*bytes = x;
 
 		break;
+	}
+
+	return 0;
+}
+
+int do_read_loop(int fd, void *buf, ll size)
+{
+	int err;
+	ll bytes;
+
+	while (size > 0) {
+		err = do_read(fd, buf, size, &bytes);
+		if (unlikely(err))
+			return err;
+
+		if (unlikely(0 == bytes))
+			error("read() returned zero bytes.");
+
+		buf  += bytes;
+		size -= bytes;
 	}
 
 	return 0;
