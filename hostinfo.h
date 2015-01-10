@@ -7,6 +7,7 @@
 #include <net/if.h>
 
 struct _ipv4interface;
+struct _route;
 
 /*
  * Information about the execution host.
@@ -23,8 +24,10 @@ struct hostinfo
 	int			nipv4ifs;
 	struct _ipv4interface	*ipv4ifs;
 
-	/* FIXME Routing table.
-	 */	
+	/* Routing table.
+	 */
+	int			nroutes;
+	struct _route		*routes;
 };
 
 /*
@@ -32,9 +35,17 @@ struct hostinfo
  */
 struct _ipv4interface
 {
+	int			index;
 	char			name[IFNAMSIZ];
 	struct sockaddr_in	addr;
 	struct sockaddr_in	netmask;
+};
+
+struct _route
+{
+	struct sockaddr_in	dest;
+	struct sockaddr_in	genmask;
+	struct _ipv4interface	*iface;
 };
 
 
