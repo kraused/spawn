@@ -117,5 +117,10 @@ int add_timespecs(const struct timespec *x,
  */
 int abstime_near_future(struct timespec *delay, struct timespec *x);
 
+/*
+ * Retrieve IPv4 address and port number from a socket.
+ */
+int sockaddr(int fd, ui32 *ip, ui32 *portnum);
+
 #endif
 

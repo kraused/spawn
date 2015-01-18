@@ -391,3 +391,27 @@ int abstime_near_future(struct timespec *delay, struct timespec *x)
 	return 0;
 }
 
+int sockaddr(int fd, ui32 *ip, ui32 *portnum)
+{
+	int err;
+	struct sockaddr_in sa;
+	socklen_t len;
+
+	len = sizeof(sa);
+	err = getsockname(fd, (struct sockaddr *)&sa, &len);
+	if (unlikely(err < 0)) {
+		error("getsockname() failed. errno = %d says '%s'.", errno, strerror(errno));
+		return -errno;
+	}
+
+	if (unlikely(len != sizeof(sa))) {
+		error("Size mismatch.");
+		return -ESOMEFAULT;
+	}
+
+	*ip      = ntohl(sa.sin_addr.s_addr);
+	*portnum = ntohs(sa.sin_port);
+
+	return 0;
+}
+
