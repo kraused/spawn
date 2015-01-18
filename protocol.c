@@ -122,12 +122,17 @@ int unpack_message_header(struct buffer *buffer,
 	if (unlikely(err))
 		return err;
 
-	header->src = tmp[0];
-	header->dst = tmp[1];
-	header->flags = tmp[2];
-	header->type = tmp[3];
+	header->src     = tmp[0];
+	header->dst     = tmp[1];
+	header->flags   = tmp[2];
+	header->type    = tmp[3];
 	header->channel = tmp[4];
 	/* ignore pad16 */
+
+	if (unlikely(header->payload < 1)) {
+		error("Invalid payload size %lld.", (ll )header->payload);
+		return -ESOMEFAULT;
+	}
 
 	return 0;
 }

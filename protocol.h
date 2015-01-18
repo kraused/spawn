@@ -43,6 +43,9 @@ enum
 
 /*
  * Message header for all protocol messages. The payload size may not be null!
+ *
+ * The packed variant of message_header must consume exactly sizeof(message_header)
+ * bytes or otherwise the communication routines will be broken!
  */
 struct __attribute__((packed)) message_header
 {
