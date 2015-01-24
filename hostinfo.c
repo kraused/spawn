@@ -134,7 +134,12 @@ int map_address_to_interface(struct hostinfo *hi,
 
 	a = ntohl(addr->sin_addr.s_addr);
 
-	for (i = 0; i < hi->nipv4ifs; ++i) {
+	if (unlikely(!hi->defroute)) {
+		error("Default route is unknown.");
+		return -ESOMEFAULT;
+	}
+
+	for (i = 0; i < hi->nroutes; ++i) {
 		if (hi->defroute == &hi->routes[i])
 			continue;
 
@@ -207,9 +212,19 @@ static int _query_ipv4interfaces(struct alloc *alloc, int *nifs,
 
 		ifr = ifc.ifc_req[k];
 
-		(*ifs)[i].index = ifc.ifc_req[k].ifr_ifindex;
-
 		memcpy((*ifs)[i].name, ifc.ifc_req[k].ifr_name, sizeof((*ifs)[i].name));
+
+		/* We could also use if_nametoindex() here.
+		 */
+		err = ioctl(sock, SIOCGIFINDEX, &ifr);
+		if (unlikely(err < 0)) {
+			error("ioctl() failed. errno = %d says '%s'.",
+			      errno, strerror(errno));
+			err = -errno;
+			goto fail;
+		}
+
+		(*ifs)[i].index = ifr.ifr_ifindex;
 
 		err = ioctl(sock, SIOCGIFADDR, &ifr);
 		if (unlikely(err < 0)) {
@@ -236,8 +251,8 @@ static int _query_ipv4interfaces(struct alloc *alloc, int *nifs,
 		 */
 		strcpy(buf1, inet_ntoa((*ifs)[i].addr.sin_addr));
 		strcpy(buf2, inet_ntoa((*ifs)[i].netmask.sin_addr));
-		debug("Interface %d = {.name = %s, .addr = %s, .netmask = %s}", i,
-		      (*ifs)[i].name, buf1, buf2);
+		debug("Interface %d = {.name = %s, .addr = %s, .netmask = %s, .index = %d}", i,
+		      (*ifs)[i].name, buf1, buf2, (*ifs)[i].index);
 
 		++i;
 	}
@@ -585,7 +600,12 @@ static int _hostinfo_copy_routes(struct hostinfo *self,
 			}
 
 		if (unlikely(!self->routes[i].iface)) {
-			error("Could not find interface with index %d.", xroutes[i].ifindex);
+			char buf3[IF_NAMESIZE];
+
+			if_indextoname(xroutes[i].ifindex, buf3);
+			error("Could not find interface with index %d ('%s').",
+			      xroutes[i].ifindex, buf3);
+
 			goto fail;
 		}
 
@@ -610,6 +630,8 @@ fail:
                      self->nroutes, sizeof(struct route), "routes");
 	if (unlikely(tmp))
 		fcallerror("ZFREE", tmp);
+
+	self->nroutes = 0;
 
 	return tmp;
 }
