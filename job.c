@@ -26,15 +26,16 @@ static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc
 static int _job_build_tree_dtor(struct job_build_tree *self);
 static int _free_job_build_tree(struct alloc *alloc, struct job_build_tree **self);
 static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed);
+static int _build_tree_listen(struct job_build_tree *self, struct spawn *spawn);
+static int _open_listenfds(struct job_build_tree *self, struct spawn *spawn,
+                           int fds[NETWORK_MAX_LISTENFDS], int *nfds);
+static int _create_socket_and_bind(struct sockaddr *addr, ull addrlen, int *fd);
+static int _listen_listenfds(struct job_build_tree *self, struct spawn *spawn,
+                             int *fds, int nfds);
 static int _build_tree_spawn_children(struct job_build_tree *self, struct spawn *spawn);
 static int _send_request_build_tree_message(struct job_build_tree *self, struct spawn *spawn,
                                             int dest, int nhosts, si32 *hosts);
 static int _send_response_build_tree_message(struct job_build_tree *self, struct spawn *spawn);
-static int _job_join_ctor(struct job_join *self, struct alloc *alloc, int parent);
-static int _job_join_dtor(struct job_join *self);
-static int _free_job_join(struct alloc *alloc, struct job_join **self);
-static int _join_work(struct job *job, struct spawn *spawn, int *completed);
-static int _join_send_request(struct spawn *spawn, int parent);
 static int _job_task_ctor(struct job_task *self, struct alloc *alloc,
                           const char *path, ui16 channel);
 static int _job_task_dtor(struct job_task *self);
@@ -49,7 +50,6 @@ static int _free_job_exit(struct alloc *alloc, struct job_exit **self);
 static int _exit_work(struct job *job, struct spawn *spawn, int *completed);
 static int _exit_send_request(struct spawn *spawn);
 static int _exit_send_response(struct spawn *spawn);
-static int _sockaddr(int fd, ui32 *ip, ui32 *portnum);
 static int _prepare_task_job(struct spawn *spawn);
 
 
@@ -67,20 +67,6 @@ int alloc_job_build_tree(struct alloc *alloc, struct spawn *spawn,
 
 	return _job_build_tree_ctor((struct job_build_tree *)*self, alloc,
 	                             spawn, nhosts, hosts);
-}
-
-int alloc_job_join(struct alloc *alloc, int parent, struct job **self)
-{
-	int err;
-
-	err = ZALLOC(alloc, (void **)self, 1,
-	             sizeof(struct job_join), "struct job_join");
-	if (unlikely(err)) {
-		fcallerror("ZALLOC", err);
-		return err;
-	}
-
-	return _job_join_ctor((struct job_join *)*self, alloc, parent);
 }
 
 int alloc_job_task(struct alloc *alloc, const char* path,
@@ -122,10 +108,6 @@ int free_job(struct job **self)
 		err = _free_job_build_tree((*self)->alloc,
 		                           (struct job_build_tree **)self);
 		break;
-	case JOB_TYPE_JOIN:
-		err = _free_job_join((*self)->alloc,
-		                     (struct job_join **)self);
-		break;
 	case JOB_TYPE_TASK:
 		err = _free_job_task((*self)->alloc,
 		                     (struct job_task **)self);
@@ -157,9 +139,8 @@ static int _job_build_tree_ctor(struct job_build_tree *self, struct alloc* alloc
 
 	err = optpool_find_by_key_as_int(spawn->opts, "TreeWidth", &treewidth);
 	if (unlikely(err)) {
-		fcallerror("optpool_find_by_key_as_int", &err);
-		die();	/* Very unlikely
-			 */
+		fcallerror("optpool_find_by_key_as_int", err);
+		die();	/* Very unlikely. */
 	}
 
 	self->job.alloc = alloc;
@@ -268,6 +249,12 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 	if (1 == self->phase) {
 		self->start = llnow();
 
+		err = _build_tree_listen(self, spawn);
+		if (unlikely(err)) {
+			fcallerror("_build_tree_listen", err);
+			die();	/* FIXME */
+		}
+
 		if (0 == spawn->tree.here) {
 			err = exec_worker_pool_start(spawn->wkpool);
 			if (unlikely(err)) {
@@ -301,6 +288,7 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 				/* FIXME Variable timeout value
 				 */
 				if (unlikely((llnow() - self->children[i].spawned) > 60)) {
+					error("Child %d did not connect back.", i);
 					die(); /* FIXME */
 				}
 			}
@@ -376,15 +364,160 @@ static int _build_tree_work(struct job *job, struct spawn *spawn, int *completed
 	return 0;
 }
 
-static int _build_tree_spawn_children(struct job_build_tree *self, struct spawn *spawn)
+static int _build_tree_listen(struct job_build_tree *self, struct spawn *spawn)
+{
+	int err;
+	int fds[NETWORK_MAX_LISTENFDS];
+	int n;
+
+	n = 0;
+	err = _open_listenfds(self, spawn, fds, &n);
+	if (unlikely(err))
+		fcallerror("_open_listenfds", err);
+
+	err = _listen_listenfds(self, spawn, fds, n);
+	if (unlikely(err))
+		fcallerror("_listen_listenfds", err);
+
+	/* Temporarily disable the communication thread. Otherwise it
+	 * happens that we have to wait for seconds before acquiring the
+	 * lock.
+	 */
+	err = comm_stop_processing(&spawn->comm);
+	if (unlikely(err))
+		error("Failed to temporarily stop the communication thread.");
+
+	err = network_lock_acquire(&spawn->tree);
+	if (unlikely(err))
+		die();
+
+	err = network_add_listenfds(&spawn->tree, fds, n);
+	if (unlikely(err))
+		fcallerror("network_add_listenfd", err);
+
+	err = network_lock_release(&spawn->tree);
+	if (unlikely(err))
+		die();
+
+	err = comm_resume_processing(&spawn->comm);
+	if (unlikely(err)) {
+		error("Failed to resume the communication thread.");
+		die();	/* Pretty much impossible that this happen. If it does
+			 * we are screwed though. */
+	}
+
+
+	return 0;
+}
+
+static int _open_listenfds(struct job_build_tree *self, struct spawn *spawn,
+                           int fds[NETWORK_MAX_LISTENFDS], int *nfds)
+{
+	int err;
+	int i, j, k;
+	const char *host;
+	struct ipv4interface *ifaces[NETWORK_MAX_LISTENFDS];
+	struct ipv4interface *iface;
+	ui32 ip, port;
+
+	memset(ifaces, 0, sizeof(ifaces));
+
+	k = 0;
+	for (i = 0; i < self->nchildren; ++i) {
+		host = spawn->hosts[self->hosts[self->children[i].host]];
+
+		err = map_hostname_to_interface(&spawn->hostinfo, host, &iface);
+		if (unlikely(err)) {
+			fcallerror("map_hostname_to_interface", err);
+			continue;
+		}
+
+		for (j = 0; j < k; ++j) {
+			if (ifaces[j] == iface)
+				break;
+		}
+
+		if (k == j) {
+			if (unlikely(k == NETWORK_MAX_LISTENFDS)) {
+				error("NETWORK_MAX_LISTENFDS is too low.");
+				die();
+			}
+
+			err = _create_socket_and_bind((struct sockaddr *)&iface->addr,
+			                              sizeof(iface->addr), &fds[k]);
+			if (unlikely(err)) {
+				fcallerror("bind_socket_to_interface", err);
+				continue;
+			}
+
+			ifaces[k++] = iface;
+		}
+
+		err = sockaddr(fds[j], &ip,
+		                       &port);
+		if (unlikely(err))
+			fcallerror("sockaddr", err);
+
+		self->children[i].conn.sin_family      = AF_INET;
+		self->children[i].conn.sin_port        = port;
+		self->children[i].conn.sin_addr.s_addr = htonl(ip);
+	}
+
+	*nfds = k;
+
+	return 0;
+}
+
+static int _create_socket_and_bind(struct sockaddr *addr, ull addrlen, int *fd)
+{
+	int err;
+
+	*fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (unlikely(fd < 0)) {
+		error("socket() failed. errno = %d says '%s'.", errno, strerror(errno));
+		return -errno;
+	}
+
+	err = bind(*fd, addr, addrlen);
+	if (unlikely(err)) {
+		error("bind() failed. errno = %d says '%s'.", errno, strerror(errno));
+		close(*fd);
+		return -errno;
+	}
+
+	return 0;
+}
+
+static int _listen_listenfds(struct job_build_tree *self, struct spawn *spawn,
+                             int *fds, int nfds)
 {
 	int err;
 	int i;
-	ui32 ip, portnum;
-	struct in_addr in;
+	int backlog;
+
+	err = optpool_find_by_key_as_int(spawn->opts, "TreeSockBacklog", &backlog);
+	if (unlikely(err)) {
+		fcallerror("optpool_find_by_key_as_int", err);
+		backlog = 128;
+	}
+
+	for (i = 0; i < nfds; ++i) {
+		err = listen(fds[i], backlog);
+		if (unlikely(err))
+			error("listen() failed. errno = %d says '%s'.",
+			      errno, strerror(errno));
+	}
+
+	return 0;
+}
+
+static int _build_tree_spawn_children(struct job_build_tree *self, struct spawn *spawn)
+{
+	int err;
+	int i, n;
 	struct message_header       header;
 	struct message_request_exec msg;
-	char host[32];
+	char host[HOST_NAME_MAX];
 	char argv1[32];
 	char argv2[32];
 	char argv3[32];
@@ -394,12 +527,6 @@ static int _build_tree_spawn_children(struct job_build_tree *self, struct spawn 
 	                argv1, argv2,
 	                argv3, argv4,
 	                argv5, NULL};
-
-	err = _sockaddr(spawn->tree.listenfd, &ip, &portnum);
-	if (unlikely(err)) {
-		fcallerror("_sockaddr", err);
-		return err;
-	}
 
 	memset(&header, 0, sizeof(header));
 	memset(&msg   , 0, sizeof(msg));
@@ -420,16 +547,21 @@ static int _build_tree_spawn_children(struct job_build_tree *self, struct spawn 
 	for (i = 0; i < self->nchildren; ++i) {
 		/* FIXME Capture errors from those snprintf()s! */
 
-		snprintf(host, sizeof(host),
-		         spawn->hosts[self->hosts[self->children[i].host]]);
+		n = snprintf(host, sizeof(host), "%s",
+		            spawn->hosts[self->hosts[self->children[i].host]]);
+		if (unlikely(n == sizeof(host))) {
+			error("Hostname truncated");
+			continue;
+		}
 
-		in.s_addr = htonl(ip);
-		snprintf(argv1, sizeof(argv1), "%s", inet_ntoa(in));
-		snprintf(argv2, sizeof(argv2), "%d", (int )portnum);
+		snprintf(argv1, sizeof(argv1), "%s", inet_ntoa(self->children[i].conn.sin_addr));
+		snprintf(argv2, sizeof(argv2), "%d", (int )self->children[i].conn.sin_port);
 
 		snprintf(argv3, sizeof(argv3), "%d", spawn->tree.here);	/* my participant id */
 		snprintf(argv4, sizeof(argv4), "%d", spawn->nhosts);	/* number of hosts */
 		snprintf(argv5, sizeof(argv5), "%d", self->children[i].id);
+
+		debug("'%s' '%s' '%s' '%s' '%s'", argv1, argv2, argv3, argv4, argv5);
 
 		err = spawn_send_message(spawn, &header, (void *)&msg);
 		if (unlikely(err))
@@ -489,97 +621,6 @@ static int _send_response_build_tree_message(struct job_build_tree *self, struct
 	header.type  = MESSAGE_TYPE_RESPONSE_BUILD_TREE;
 
 	msg.deads = 0;	/* FIXME */
-
-	err = spawn_send_message(spawn, &header, (void *)&msg);
-	if (unlikely(err)) {
-		fcallerror("spawn_send_message", err);
-		return err;
-	}
-
-	return 0;
-}
-
-static int _job_join_ctor(struct job_join *self, struct alloc *alloc, int parent)
-{
-	self->job.alloc = alloc;
-	self->job.type  = JOB_TYPE_JOIN;
-	self->job.work  = _join_work;
-
-	self->parent    = parent;
-	self->acked     = 0;
-
-	list_ctor(&self->job.list);
-
-	return 0;
-}
-
-static int _job_join_dtor(struct job_join *self)
-{
-	return 0;
-}
-
-static int _free_job_join(struct alloc *alloc, struct job_join **self)
-{
-	int err;
-
-	err = _job_join_dtor(*self);
-	if (unlikely(err))
-		fcallerror("_job_join_dtor", err);
-
-	err = ZFREE(alloc, (void **)self, 1,
-	            sizeof(struct job_join), "");
-	if (unlikely(err)) {
-		fcallerror("ZFREE", err);
-		return err;
-	}
-
-	return 0;
-}
-
-static int _join_work(struct job *job, struct spawn *spawn, int *completed)
-{
-	int err;
-	struct job_join *self = (struct job_join *)job;
-
-	if (-1 != self->parent) {
-		err = _join_send_request(spawn, self->parent);
-		if (unlikely(err)) {
-			fcallerror("_join_send_request", err);
-			return err;
-		}
-
-		self->parent = -1;
-	}
-
-	if (1 == self->acked) {
-		log("Succesfully joined the network.");
-		*completed = 1;
-	}
-
-	return 0;
-}
-
-static int _join_send_request(struct spawn *spawn, int parent)
-{
-	int err;
-	struct message_header       header;
-	struct message_request_join msg;
-
-	assert(1 == spawn->tree.nports);
-
-	memset(&header, 0, sizeof(header));
-	memset(&msg   , 0, sizeof(msg));
-
-	header.src   = spawn->tree.here;	/* Always the same */
-	header.dst   = parent;
-	header.flags = MESSAGE_FLAG_UCAST;
-	header.type  = MESSAGE_TYPE_REQUEST_JOIN;
-
-	msg.pid = getpid();
-
-	err = _sockaddr(spawn->tree.ports[0], &msg.ip, &msg.portnum);
-	if (unlikely(err))
-		return err;
 
 	err = spawn_send_message(spawn, &header, (void *)&msg);
 	if (unlikely(err)) {
@@ -880,6 +921,8 @@ static int _exit_send_request(struct spawn *spawn)
 	header.flags = MESSAGE_FLAG_BCAST;
 	header.type  = MESSAGE_TYPE_REQUEST_EXIT;
 
+	debug("Broadcasting exit request.");
+
 	err = spawn_send_message(spawn, &header, (void *)&msg);
 	if (unlikely(err)) {
 		fcallerror("spawn_send_message", err);
@@ -911,30 +954,6 @@ static int _exit_send_response(struct spawn *spawn)
 		fcallerror("spawn_send_message", err);
 		return err;
 	}
-
-	return 0;
-}
-
-static int _sockaddr(int fd, ui32 *ip, ui32 *portnum)
-{
-	int err;
-	struct sockaddr_in sa;
-	socklen_t len;
-
-	len = sizeof(sa);
-	err = getsockname(fd, (struct sockaddr *)&sa, &len);
-	if (unlikely(err < 0)) {
-		error("getsockname() failed. errno = %d says '%s'.", errno, strerror(errno));
-		return -errno;
-	}
-
-	if (unlikely(len != sizeof(sa))) {
-		error("Size mismatch.");
-		return -ESOMEFAULT;
-	}
-
-	*ip      = ntohl(sa.sin_addr.s_addr);
-	*portnum = ntohs(sa.sin_port);
 
 	return 0;
 }

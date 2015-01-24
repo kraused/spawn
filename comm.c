@@ -25,22 +25,25 @@ static int _comm_queue_peek(struct comm_queue *self,
                             struct buffer **buffer);
 static int _comm_queue_size(struct comm_queue *self, ll *size);
 static int _comm_handle_net_changes(struct comm *self);
-static int _comm_zalloc_arrays(struct alloc *alloc, int npollfds,
+static int _comm_zalloc_arrays(struct alloc *alloc,
+                               int nrwfds, int npollfds,
                                struct pollfd **pollfds,
                                struct buffer ***recvb,
                                struct buffer ***sendb);
-static int _comm_zfree_arrays(struct alloc *alloc, int npollfds,
+static int _comm_zfree_arrays(struct alloc *alloc,
+                              int nrwfds, int npollfds,
                               struct pollfd **pollfds,
                               struct buffer ***recvb,
                               struct buffer ***sendb);
 static int _comm_initialize_arrays(struct network *net,
-                                   int npollfds, struct pollfd *pollfds,
+                                   int nrwfds, int npollfds,
+                                   struct pollfd *pollfds,
                                    struct buffer **recvb,
                                    struct buffer **sendb);
-static int _comm_transfer_arrays(int npollfds1, struct pollfd *pollfds1,
+static int _comm_transfer_arrays(int nrwfds1, struct pollfd *pollfds1,
                                  struct buffer **recvb1,
                                  struct buffer **sendb1,
-                                 int npollfds2, struct pollfd *pollfds2,
+                                 int nrwfds2, struct pollfd *pollfds2,
                                  struct buffer **recvb2,
                                  struct buffer **sendb2);
 static int _comm_fill_sendb(struct comm *self);
@@ -50,7 +53,6 @@ static int _comm_reads(struct comm *self);
 static int _comm_writes(struct comm *self);
 static int _comm_pull_recvb(struct comm *self, int i);
 static int _comm_resize_recvb(struct comm *self, int i);
-static int _secretly_copy_header(struct buffer *buffer, struct message_header *header);
 static int _copy_buffer(struct buffer_pool *bufpool,
                         struct buffer *buffer, struct buffer **copy);
 
@@ -76,10 +78,12 @@ int comm_ctor(struct comm *self, struct alloc *alloc,
 
 	/* Created on demand.
 	 */
-	self->npollfds = 0;
-	self->pollfds  = NULL;
-	self->recvb    = NULL;
-	self->sendb    = NULL;
+	self->nrwfds     = 0;
+	self->nlistenfds = 0;
+	self->npollfds   = 0;
+	self->pollfds    = NULL;
+	self->recvb      = NULL;
+	self->sendb      = NULL;
 
 	self->bcastb = NULL;
 	self->bcastp = -1;
@@ -128,7 +132,7 @@ int comm_dtor(struct comm *self)
 	if (unlikely(err))
 		return err;	/* _comm_queue_dtor() reports reason. */
 
-	err = _comm_zfree_arrays(self->alloc, self->npollfds,
+	err = _comm_zfree_arrays(self->alloc, self->nrwfds, self->npollfds,
 	                         &self->pollfds, &self->recvb, &self->sendb);
 	if (unlikely(err))
 		return err;	/* _comm_zfree_arrays() reports reason. */
@@ -278,11 +282,9 @@ static int _comm_thread(void *arg)
 		if (unlikely(err))
 			continue;
 
-		if (unlikely(self->npollfds != (1 + self->net->nports))) {
-			err = _comm_handle_net_changes(self);
-			if (unlikely(err))
-				goto unlock;
-		}
+		err = _comm_handle_net_changes(self);
+		if (unlikely(err))
+			goto unlock;
 
 		err = _comm_fill_sendb(self);
 		if (unlikely(err))
@@ -292,7 +294,9 @@ static int _comm_thread(void *arg)
 		if (unlikely(err))
 			goto unlock;
 
-		err = do_poll(self->pollfds, self->npollfds, 1, &num);	/* TODO	Make the timeout configurable. */
+		/* TODO Make the timeout configurable.
+		 */
+		err = do_poll(self->pollfds, self->npollfds, 1, &num);
 		if (unlikely(err))
 			goto unlock;	/* do_poll() writes error(). */
 
@@ -310,8 +314,6 @@ static int _comm_thread(void *arg)
 		err = _comm_writes(self);
 		if (unlikely(err))
 			goto unlock;
-
-		/* FIXME Do the rest of the work! */
 
 unlock:
 		err = network_lock_release(self->net);
@@ -522,51 +524,63 @@ static int _comm_queue_size(struct comm_queue *self, ll *size)
 static int _comm_handle_net_changes(struct comm *self)
 {
 	int err;
-	int npollfds;
+	int nrwfds, npollfds, nlistenfds;
 	struct pollfd *pollfds;
 	struct buffer **recvb;
 	struct buffer **sendb;
 
-	npollfds = 1 + self->net->nports;
+	nlistenfds = self->net->nlistenfds;
+	nrwfds     = self->net->nports;
 
-	err = _comm_zalloc_arrays(self->alloc, npollfds,
+	/* Most likely nothing has changed.
+	 */
+	if (likely((self->nlistenfds == nlistenfds) &&
+	           (self->nrwfds     == nrwfds    )))
+		return 0;
+
+	npollfds   = nlistenfds + nrwfds;
+
+	err = _comm_zalloc_arrays(self->alloc, nrwfds, npollfds,
 	                          &pollfds, &recvb, &sendb);
 	if (unlikely(err))
 		return err;	/* _comm_zalloc_arrays() reports reason. */
 
-	err = _comm_initialize_arrays(self->net, npollfds, pollfds,
-	                              recvb, sendb);
+	err = _comm_initialize_arrays(self->net, nrwfds, npollfds,
+	                              pollfds, recvb, sendb);
 	if (unlikely(err))
 		goto fail;	/* _comm_initialize_arrays() reports reason. */
 
 	if (self->npollfds > 0) {
-		err = _comm_transfer_arrays(self->npollfds, self->pollfds,
+		err = _comm_transfer_arrays(self->nrwfds, self->pollfds,
 		                            self->recvb, self->sendb,
-		                            npollfds, pollfds, recvb, sendb);
+		                            nrwfds, pollfds, recvb, sendb);
 		if (unlikely(err))
 			goto fail;	/* _comm_transfer_arrays() reports reason. */
 	}
 
-	err = _comm_zfree_arrays(self->alloc, self->npollfds,
+	err = _comm_zfree_arrays(self->alloc, self->nrwfds, self->npollfds,
 	                         &self->pollfds, &self->recvb, &self->sendb);
 	if (unlikely(err))
 		return err;	/* _comm_zfree_arrays() reports reason. */
 
-	self->npollfds = npollfds;
-	self->pollfds  = pollfds;
-	self->recvb    = recvb;
-	self->sendb    = sendb;
+	self->npollfds   = npollfds;
+	self->nlistenfds = nlistenfds;
+	self->nrwfds     = nrwfds;
+	self->pollfds    = pollfds;
+	self->recvb      = recvb;
+	self->sendb      = sendb;
 
 	return 0;
 
 fail:
-	_comm_zfree_arrays(self->alloc, npollfds,
+	_comm_zfree_arrays(self->alloc, nrwfds, npollfds,
 	                   &pollfds, &recvb, &sendb);
 
 	return err;
 }
 
-static int _comm_zalloc_arrays(struct alloc *alloc, int npollfds,
+static int _comm_zalloc_arrays(struct alloc *alloc,
+                               int nrwfds, int npollfds,
                                struct pollfd **pollfds,
                                struct buffer ***recvb,
                                struct buffer ***sendb)
@@ -580,29 +594,30 @@ static int _comm_zalloc_arrays(struct alloc *alloc, int npollfds,
 		return err;
 	}
 
-	if (unlikely(npollfds > 1)) {
-		err = ZALLOC(alloc, (void **)recvb, npollfds - 1,
+	*recvb = NULL;
+	*sendb = NULL;
+
+	if (nrwfds > 0) {
+		err = ZALLOC(alloc, (void **)recvb, nrwfds,
 		             sizeof(void *), "recvb");
 		if (unlikely(err)) {
 			fcallerror("ZALLOC", err);
 			return err;
 		}
 
-		err = ZALLOC(alloc, (void **)sendb, npollfds - 1,
+		err = ZALLOC(alloc, (void **)sendb, nrwfds,
 		             sizeof(void *), "sendb");
 		if (unlikely(err)) {
 			fcallerror("ZALLOC", err);
 			return err;
 		}
-	} else {
-		*recvb = NULL;
-		*sendb = NULL;
 	}
 
 	return 0;
 }
 
-static int _comm_zfree_arrays(struct alloc *alloc, int npollfds,
+static int _comm_zfree_arrays(struct alloc *alloc,
+                              int nrwfds, int npollfds,
                               struct pollfd **pollfds,
                               struct buffer ***recvb,
                               struct buffer ***sendb)
@@ -619,12 +634,7 @@ static int _comm_zfree_arrays(struct alloc *alloc, int npollfds,
 	}
 
 	if (*recvb) {
-		if (unlikely(npollfds < 2)) {
-			error("recvb is not NULL but npollfds = %d", npollfds);
-			return err;
-		}
-
-		err = ZFREE(alloc, (void **)recvb, npollfds - 1,
+		err = ZFREE(alloc, (void **)recvb, nrwfds,
 		            sizeof(void *), "");
 		if (unlikely(err)) {
 			fcallerror("ZFREE", err);
@@ -633,12 +643,7 @@ static int _comm_zfree_arrays(struct alloc *alloc, int npollfds,
 	}
 
 	if (*sendb) {
-		if (unlikely(npollfds < 2)) {
-			error("sendb is not NULL but npollfds = %d", npollfds);
-			return err;
-		}
-
-		err = ZFREE(alloc, (void **)sendb, npollfds - 1,
+		err = ZFREE(alloc, (void **)sendb, nrwfds,
 		            sizeof(void *), "");
 		if (unlikely(err)) {
 			fcallerror("ZFREE", err);
@@ -650,31 +655,30 @@ static int _comm_zfree_arrays(struct alloc *alloc, int npollfds,
 }
 
 static int _comm_initialize_arrays(struct network *net,
-                                   int npollfds, struct pollfd *pollfds,
+                                   int nrwfds, int npollfds,
+                                   struct pollfd *pollfds,
                                    struct buffer **recvb,
                                    struct buffer **sendb)
 {
-	int i;
+	int i, j;
 
 	memset(pollfds, 0, npollfds*sizeof(struct pollfd));
-	for (i = 0; i < npollfds - 1; ++i) {
-		recvb[i] = NULL;
-		sendb[i] = NULL;
-	}
+	memset(recvb  , 0, nrwfds  *sizeof(void *));
+	memset(sendb  , 0, nrwfds  *sizeof(void *));
 
-	pollfds[0].fd = net->listenfd;
+	for (i = 0; i < nrwfds; ++i)
+		pollfds[i].fd = net->ports[i];
 
-	for (i = 0; i < npollfds - 1; ++i) {
-		pollfds[i + 1].fd = net->ports[i];
-	}
+	for (i = nrwfds, j = 0; i < npollfds; ++i, ++j)
+		pollfds[i].fd = net->listenfds[j];
 
 	return 0;
 }
 
-static int _comm_transfer_arrays(int npollfds1, struct pollfd *pollfds1,
+static int _comm_transfer_arrays(int nrwfds1, struct pollfd *pollfds1,
                                  struct buffer **recvb1,
                                  struct buffer **sendb1,
-                                 int npollfds2, struct pollfd *pollfds2,
+                                 int nrwfds2, struct pollfd *pollfds2,
                                  struct buffer **recvb2,
                                  struct buffer **sendb2)
 {
@@ -684,8 +688,8 @@ static int _comm_transfer_arrays(int npollfds1, struct pollfd *pollfds1,
 	 *       In this case we forget about buffers and introduce a leak.
 	 */
 
-	for (i = 0; i < npollfds2 - 1; ++i)
-		for (j = 0; j < npollfds1 -1; ++j)
+	for (i = 0; i < nrwfds2; ++i)
+		for (j = 0; j < nrwfds1; ++j)
 			if (pollfds2[i].fd == pollfds1[j].fd) {
 				sendb2[i] = sendb1[j];
 				recvb2[i] = recvb1[j];
@@ -705,7 +709,7 @@ static int _comm_fill_sendb(struct comm *self)
 	while (1) {
 		if ((buffer = self->bcastb)) {
 			n = 1;
-			for (i = 0; i < self->npollfds - 1; ++i)
+			for (i = 0; i < self->nrwfds; ++i)
 				n += (NULL == self->sendb[i]);
 
 			/* Do not process normal messages until we have finished the
@@ -715,14 +719,14 @@ static int _comm_fill_sendb(struct comm *self)
 			if (n < self->npollfds)
 				break;
 
-			for (i = 0; i < self->npollfds - 1; ++i) {
+			for (i = 0; i < self->nrwfds; ++i) {
 				if (self->bcastp == i)
 					continue;
 
 				self->sendb[i] = buffer;
 				break;
 			}
-			for (; i < self->npollfds - 1; ++i) {
+			for (; i < self->nrwfds; ++i) {
 				if (self->bcastp == i)
 					continue;
 
@@ -748,7 +752,7 @@ static int _comm_fill_sendb(struct comm *self)
 		if (unlikely(err))
 			return err;
 
-		err = _secretly_copy_header(buffer, &header);
+		err = secretly_copy_header(buffer, &header);
 		if (unlikely(err))
 			return err;
 
@@ -810,8 +814,13 @@ static int _comm_fill_sendb(struct comm *self)
 		if (unlikely((header.dst < 0) ||
 		             (header.dst >= self->net->size) ||
 		             (-1 == self->net->lft[header.dst]))) {
-			error("Dropping invalid message " \
-			      "with destination %d.", header.dst);
+
+			if ((header.dst < 0) || (header.dst >= self->net->size))
+				error("Dropping message with "
+				      "invalid destination %d.", header.dst);
+			else
+				error("Dropping message with destination %d "
+				      "due to missing LFT entry.", header.dst);
 
 			err = _comm_queue_dequeue(&self->sendq, &buffer);
 			if (unlikely(err)) {
@@ -852,16 +861,16 @@ static int _comm_fill_pollfds_events(struct comm *self)
 		self->pollfds[i].events = self->pollfds[i].revents = 0;
 	}
 
-	if (-1 == atomic_read(self->net->newfd))
-		self->pollfds[0].events |= POLLIN | POLLPRI | POLLERR;
-
-	for (i = 1; i < self->npollfds; ++i) {
+	for (i = 0; i < self->nrwfds; ++i) {
 		self->pollfds[i].events |= POLLIN | POLLPRI | POLLERR;
+
+		if (self->sendb[i])
+			self->pollfds[i].events |= POLLOUT;
 	}
 
-	for (i = 0; i < self->npollfds - 1; ++i) {
-		if (self->sendb[i])
-			self->pollfds[i+1].events |= POLLOUT;
+	if (-1 == atomic_read(self->net->newfd)) {
+		for (i = self->nrwfds; i < self->npollfds; ++i)
+			self->pollfds[i].events |= POLLIN | POLLPRI | POLLERR;
 	}
 
 	return 0;
@@ -871,43 +880,48 @@ static int _comm_accept(struct comm *self)
 {
 	int err, tmp;
 	int fd;
+	int i;
 
 	if (unlikely(0 == self->npollfds))
 		return -EINVAL;
 
-	if (!(self->pollfds[0].revents & POLLIN))
-		return 0;
+	for (i = self->nrwfds; i < self->npollfds; ++i) {
+		if (!(self->pollfds[i].revents & POLLIN))
+			return 0;
 
-	fd = do_accept(self->pollfds[0].fd, NULL, NULL);
-	if (unlikely(fd < 0))
-		return fd;
+		fd = do_accept(self->pollfds[i].fd, NULL, NULL);
+		if (unlikely(fd < 0))
+			return fd;
 
-	err = cond_var_lock_acquire(&self->cond);
-	if (unlikely(err)) {
-		fcallerror("cond_var_lock_acquire", err);
-		die();
-	}
+		err = cond_var_lock_acquire(&self->cond);
+		if (unlikely(err)) {
+			fcallerror("cond_var_lock_acquire", err);
+			die();
+		}
 
-	log("Accepted new connection on fd %d.", fd);
+		log("Accepted new connection on fd %d.", fd);
 
-	/* Other threads will only write to newfd if newfd is not equal to -1. We tested
-	 * this at the beginning of this loop iteration. If newfd is not equal to -1 it
-	 * means that someone else violated the convention and
-	 */
-	tmp = atomic_cmpxchg(self->net->newfd, -1, fd);
-	if (unlikely(-1 != tmp)) {
-		error("Detected unexpected write to net->newfd.");
-		die();
-	}
+		/* Other threads will only write to newfd if newfd is not equal to -1. We tested
+		 * this at the beginning of this loop iteration. If newfd is not equal to -1 it
+		 * means that someone else violated the convention.
+		 */
+		tmp = atomic_cmpxchg(self->net->newfd, -1, fd);
+		if (unlikely(-1 != tmp)) {
+			error("Detected unexpected write to net->newfd.");
+			die();
+		}
 
-	err = cond_var_broadcast(&self->cond);
-	if (unlikely(err))
-		fcallerror("lock_var_broadcast", err);
+		err = cond_var_broadcast(&self->cond);
+		if (unlikely(err))
+			fcallerror("lock_var_broadcast", err);
 
-	err = cond_var_lock_release(&self->cond);
-	if (unlikely(err)) {
-		fcallerror("cond_var_lock_release", err);
-		die();
+		err = cond_var_lock_release(&self->cond);
+		if (unlikely(err)) {
+			fcallerror("cond_var_lock_release", err);
+			die();
+		}
+
+		break;
 	}
 
 	return 0;
@@ -919,8 +933,8 @@ static int _comm_reads(struct comm *self)
 	int i;
 	struct message_header header;
 
-	for (i = 0; i < self->npollfds - 1; ++i) {
-		if (!(self->pollfds[i+1].revents & POLLIN))
+	for (i = 0; i < self->nrwfds; ++i) {
+		if (!(self->pollfds[i].revents & POLLIN))
 			continue;
 
 		if (!self->recvb[i]) {
@@ -929,7 +943,7 @@ static int _comm_reads(struct comm *self)
 				continue;
 		}
 
-		err = buffer_read(self->recvb[i], self->pollfds[i+1].fd);
+		err = buffer_read(self->recvb[i], self->pollfds[i].fd);
 		if (unlikely(err)) {
 			fcallerror("buffer_read", err);
 			continue;
@@ -957,7 +971,7 @@ static int _comm_reads(struct comm *self)
 				die();
 			}
 
-			err = _secretly_copy_header(self->recvb[i], &header);
+			err = secretly_copy_header(self->recvb[i], &header);
 			if (unlikely(err))
 				return err;
 
@@ -1029,13 +1043,13 @@ static int _comm_writes(struct comm *self)
 	int err;
 	int i;
 
-	for (i = 0; i < self->npollfds - 1; ++i) {
-		if (!(self->pollfds[i+1].revents & POLLOUT))
+	for (i = 0; i < self->nrwfds; ++i) {
+		if (!(self->pollfds[i].revents & POLLOUT))
 			continue;
 		if (!self->sendb[i])
 			continue;
 
-		err = buffer_write(self->sendb[i], self->pollfds[i+1].fd);
+		err = buffer_write(self->sendb[i], self->pollfds[i].fd);
 		if (unlikely(err)) {
 			fcallerror("buffer_write", err);
 			continue;
@@ -1094,7 +1108,7 @@ static int _comm_resize_recvb(struct comm *self, int i)
 	struct message_header header;
 	ll size;
 
-	err = _secretly_copy_header(self->recvb[i], &header);
+	err = secretly_copy_header(self->recvb[i], &header);
 	if (unlikely(err))
 		return err;
 
@@ -1109,7 +1123,8 @@ static int _comm_resize_recvb(struct comm *self, int i)
 	return 0;
 }
 
-static int _secretly_copy_header(struct buffer *buffer, struct message_header *header)
+int secretly_copy_header(struct buffer *buffer,
+                         struct message_header *header)
 {
 	int err;
 	ll pos;
@@ -1126,13 +1141,6 @@ static int _secretly_copy_header(struct buffer *buffer, struct message_header *h
 	if (unlikely(err)) {
 		fcallerror("unpack_message_header", err);
 		return err;
-	}
-
-	/* Check protocol conformity.
-	 */
-	if (unlikely(header->payload < 1)) {
-		error("Invalid payload size %lld.", (ll )header->payload);
-		return -ESOMEFAULT;
 	}
 
 	err = buffer_seek(buffer, pos);

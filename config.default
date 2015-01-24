@@ -21,3 +21,9 @@ CommSendqSize=128
 # Capacity of the recv queue in struct comm
 CommRecvqSize=128
 
+# The watchdog threads makes sure that we do not leave
+# residual processes behind if we die abruptly for some
+# reason. If the watchdog is not calmed within the
+# specified timeout it does kill the program.
+WatchdogTimeout=60
+

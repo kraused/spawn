@@ -54,8 +54,7 @@ struct spawn
 	 * spawn program itself is running.
 	 */
 	int			nhosts;
-	/* Names of the hosts in the network. This value is available only
-	 * after the process has succesfully joined the network.
+	/* Names of the hosts in the network.
 	 */
 	char			**hosts;
 
@@ -82,7 +81,8 @@ struct spawn
 /*
  * Initialize a spawn instance.
  */
-int spawn_ctor(struct spawn *self, struct alloc *alloc);
+int spawn_ctor(struct spawn *self, struct alloc *alloc, struct optpool *opts,
+               int parent, int here);
 
 /*
  * Free spawn resources.
@@ -90,36 +90,11 @@ int spawn_ctor(struct spawn *self, struct alloc *alloc);
 int spawn_dtor(struct spawn *self);
 
 /*
- * Setup the spawn instance on the local host.
- */
-int spawn_setup_on_local(struct spawn *self,
-                         struct optpool *opts);
-
-/*
- * Setup the spawn instance on all other hosts.
- */
-int spawn_setup_on_other(struct spawn *self, int nhosts,
-                         int parent, int here);
-
-/*
- * Perform actions that could not be performed in
- * spawn_setup_on_other() because the configuration options were
- * not available.
- */
-int spawn_perform_delayed_setup(struct spawn *self,
-                                struct optpool *opts);
-
-/*
  * Load the exec plugin and setup the worker pool. The workers are not yet
  * active. path is the filesystem path to the DSO file containing the exec
  * plugin.
  */
 int spawn_setup_worker_pool(struct spawn *self, const char *path);
-
-/*
- * Bind the listenfd to the given address.
- */
-int spawn_bind_listenfd(struct spawn *self, struct sockaddr *addr, ull addrlen);
 
 /*
  * Start the communication module. The function begins listening

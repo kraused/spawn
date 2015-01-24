@@ -15,7 +15,6 @@ enum
 {
 	JOB_TYPE_NOOP		= 0,
 	JOB_TYPE_BUILD_TREE,
-	JOB_TYPE_JOIN,
 	JOB_TYPE_TASK,
 	JOB_TYPE_EXIT
 };
@@ -45,19 +44,26 @@ struct job
  */
 struct job_build_tree_child
 {
-	int	id;	/* Participant id */
-	int	host;
-	int	nhosts;
+	int			id;	/* Participant id */
+	int			host;
+
+	int			nhosts;	/* Number of children of the child. */
+
+	/* Port and IP address given to the child for connection back
+	 * to the parent process.
+	 */
+	struct sockaddr_in	conn;
+
 	enum {
 		UNBORN,
 		UNKNOWN,
 		ALIVE,
 		DEAD,
 		READY
-	}	state;
-	ll	spawned;	/* Time when we requested the children
-				 * to be spawned. Used to known when to
-				 * declare a child as dead. */
+	}			state;
+	ll			spawned;	/* Time when we requested the children
+						 * to be spawned. Used to known when to
+						 * declare a child as dead. */
 };
 
 /*

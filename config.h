@@ -11,5 +11,12 @@
  */
 #define SPAWN_MAX_PATH_LEN	512
 
+/*
+ * Default value. Can be overwritten using the command line options but
+ * this will only take effect once the _join() function in _main_on_other()
+ * returns.
+ */
+#define SPAWN_WATCHDOG_DEFAULT_TIMEOUT	180
+
 #endif
 

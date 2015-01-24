@@ -9,13 +9,18 @@
 #include "helper.h"
 
 
+static int _close_listenfds(struct network *self);
+static int _clear_listenfds(struct network *self);
+
+
 int network_ctor(struct network *self, struct alloc *alloc)
 {
 	memset(self, 0, sizeof(*self));
 
-	self->alloc    = alloc;
-	self->listenfd = -1;
-	self->newfd    = -1;
+	self->alloc = alloc;
+	self->newfd = -1;
+
+	_clear_listenfds(self);
 
 	return 0;
 }
@@ -23,6 +28,9 @@ int network_ctor(struct network *self, struct alloc *alloc)
 int network_dtor(struct network *self)
 {
 	memset(self, 0, sizeof(*self));
+
+	_close_listenfds(self);
+	_clear_listenfds(self);
 
 	return 0;
 }
@@ -76,6 +84,29 @@ int network_resize(struct network *self, int size)
 		self->lft[i] = -1;
 
 	self->size = size;
+
+	return 0;
+}
+
+int network_add_listenfds(struct network *self, int *fds, int nfds)
+{
+	int i;
+
+	if (0 != self->nlistenfds) {
+		error("network_add_listenfd() currently does not support "
+		      "adding sockets incrementally.");
+		return -ENOTIMPL;
+	}
+
+	if (unlikely(nfds > NETWORK_MAX_LISTENFDS)) {
+		error("NETWORK_MAX_LISTENFDS is too low.");
+		return -ESOMEFAULT;
+	}
+
+	for (i = 0; i < nfds; ++i)
+		self->listenfds[i] = fds[i];
+
+	self->nlistenfds = nfds;
 
 	return 0;
 }
@@ -170,6 +201,37 @@ int network_debug_print_lft(struct network *self)
 
 		i += n;
 	}
+
+	return 0;
+}
+
+
+static int _close_listenfds(struct network *self)
+{
+	int i;
+	int err;
+
+	for (i = 0; i < self->nlistenfds; ++i) {
+		err = do_close(self->listenfds[i]);
+		if (unlikely(err))
+			goto fail;
+	}
+
+	return 0;
+
+fail:
+	for (; i < self->nlistenfds; ++i)
+		do_close(self->listenfds[i]);
+
+	return err;
+}
+
+static int _clear_listenfds(struct network *self)
+{
+	int i;
+
+	for (i = 0; i < NETWORK_MAX_LISTENFDS; ++i)
+		self->listenfds[i] = -1;
 
 	return 0;
 }

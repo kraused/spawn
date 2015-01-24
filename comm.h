@@ -8,6 +8,7 @@
 
 struct alloc;
 struct buffer;
+struct message_header;
 
 /* This program uses an asynchronous messaging paradigm. A separate
  * communication thread is responsible for write()s and read()s to/from
@@ -65,9 +66,14 @@ struct comm
 	 */
 	struct thread		thread;
 
-	/* For poll() syscall.  Size is (1 + net->nports). */
-	int			npollfds;
-	struct pollfd		*pollfds;
+	/* For ppoll() syscall. */
+	int			nrwfds;		/* Number of fds for incoming
+						 * and outgoing traffic. */
+	int			nlistenfds;	/* Number of fds used to listen
+						 * for connections. */
+	int			npollfds;	/* == nlistenfds + nrwfds */
+	struct pollfd		*pollfds;	/* The read/write fds come first.
+						 */
 
 	/* Buffers for currently ongoing send and receive operations
 	 * ordered according to the port. Size is net->nports.
@@ -75,20 +81,13 @@ struct comm
 	struct buffer		**recvb;
 	struct buffer		**sendb;
 
-	/* TODO Gather statistics about the length of the waiter queue.
-	 */
-
-	/* Per port queue for send and receive buffers that could not be
-	 * enqueued in one of the other queues or lists because they were
-	 * busy.
-	 */
-	struct queue		*waiter;
-
 	/* Storage for outgoing broadcast messages.
 	 */
 	struct buffer		*bcastb;
 	int			bcastp;
 
+	/* Next free channel returned by comm_rescv_channel().
+	 */
 	ui16			channel;
 };
 
@@ -162,6 +161,12 @@ int comm_flush(struct comm *self);
  * Reserve a virtual channel.
  */
 int comm_resv_channel(struct comm *self, ui16 *channel);
+
+/*
+ * Internal function exported for use by _recv_join_response() in main.c.
+ */
+int secretly_copy_header(struct buffer *buffer,
+                         struct message_header *header);
 
 #endif
 

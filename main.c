@@ -23,6 +23,7 @@
 #include "watchdog.h"
 #include "loop.h"
 #include "job.h"
+#include "protocol.h"
 
 
 /*
@@ -52,19 +53,38 @@ struct _args_other
 
 static int _main_on_local(int argc, char **argv);
 static int _main_on_other(int argc, char **argv);
-static int _localaddr(struct sockaddr_in *sa);
+static int _run_loop(struct spawn *spawn);
 static int _parse_argv_on_other(int argc, char **argv, struct _args_other *args);
 static int _redirect_stdio();
-static int _connect_to_parent(struct spawn *spawn, struct sockaddr_in *sa);
+static int _join(struct alloc *alloc, struct _args_other *args, int *fd,
+                 struct optpool **opts);
+static int _send_join_request(struct alloc *alloc, int parent, int here, int fd);
+static int _recv_join_response(struct alloc *alloc, int fd,
+                               struct optpool **opts);
+static int _connect_to_parent(struct sockaddr_in *sa, int *fd);
 static struct optpool *_alloc_and_fill_optpool(struct alloc *alloc,
                                                const char *file, char **argv);
 static int _check_important_options(struct optpool *opts);
+static int _ignore_sigpipe();
 
 
 int main(int argc, char **argv)
 {
 	int n, m;
 	int err;
+
+	/* Handle broken pipes in the caller of write()/read().
+	 */
+	_ignore_sigpipe();
+	{
+		struct sigaction act, oact;
+
+		act.sa_handler = SIG_IGN;
+		sigemptyset(&act.sa_mask);
+		act.sa_flags = SA_RESTART;
+
+		sigaction(SIGPIPE, &act, &oact);
+	}
 
 	/* Do as little as possible at this point. _main_on_other() will
 	 * call daemonize() and it is easier to setup everything after
@@ -106,7 +126,6 @@ static int _main_on_local(int argc, char **argv)
 	int err, tmp;
 	struct alloc *alloc;
 	struct spawn spawn;
-	struct sockaddr_in sa;
 	struct job *job;
 	const char *path;
 	struct optpool *opts;
@@ -126,39 +145,9 @@ static int _main_on_local(int argc, char **argv)
 	if (unlikely(err))
 		return err;
 
-	err = spawn_ctor(&spawn, alloc);
+	err = spawn_ctor(&spawn, alloc, opts, -1, 0);
 	if (unlikely(err)) {
 		error("struct spawn constructor failed with exit code %d.", err);
-		return err;
-	}
-
-	err = spawn_setup_on_local(&spawn, opts);
-	if (unlikely(err)) {
-		error("Failed to setup spawn instance.");
-		return err;
-	}
-
-	path = optpool_find_by_key(spawn.opts, "ExecPlugin");
-	if (unlikely(!path)) {
-		error("Missing 'ExecPlugin' option.");
-		return -EINVAL;
-	}
-
-	err = spawn_setup_worker_pool(&spawn, path);
-	if (unlikely(err))
-		return err;
-
-	_localaddr(&sa);
-
-	err = spawn_bind_listenfd(&spawn, (struct sockaddr *)&sa, sizeof(sa));
-	if (unlikely(err)) {
-		error("Failed to bind the listenfd.");
-		return err;
-	}
-
-	err = spawn_comm_start(&spawn);
-	if (unlikely(err)) {
-		error("Failed to start the communication module.");
 		return err;
 	}
 
@@ -171,15 +160,19 @@ static int _main_on_local(int argc, char **argv)
 
 	list_insert_before(&spawn.jobs, &job->list);
 
-	err = loop(&spawn);
-	if (unlikely(err))
-		fcallerror("loop", err);	/* Continue with the shutdown */
-
-	err = spawn_comm_halt(&spawn);
-	if (unlikely(err)) {
-		error("Failed to stop the communication module.");
-		return err;
+	path = optpool_find_by_key(spawn.opts, "ExecPlugin");
+	if (unlikely(!path)) {
+		error("Missing 'ExecPlugin' option.");
+		return -EINVAL;
 	}
+
+	err = spawn_setup_worker_pool(&spawn, path);
+	if (unlikely(err))
+		return err;
+
+	err = _run_loop(&spawn);
+	if (unlikely(err))
+		return err;
 
 	err = spawn_dtor(&spawn);
 	if (unlikely(err)) {
@@ -199,12 +192,12 @@ fail:
 
 static int _main_on_other(int argc, char **argv)
 {
-	int err, tmp;
+	int err;
 	struct alloc *alloc;
 	struct spawn spawn;
-	struct sockaddr_in sa;
 	struct _args_other args;
-	struct job *job;
+	struct optpool *opts;
+	int fd, timeout;
 
 	/*
 	 * Done before daemonize() such that the exec plugin can return
@@ -231,78 +224,45 @@ static int _main_on_other(int argc, char **argv)
 
 	alloc = libc_allocator_with_debugging();
 
-	err = spawn_ctor(&spawn, alloc);
+	err = _join(alloc, &args, &fd, &opts);
 	if (unlikely(err)) {
-		error("struct spawn constructor failed with exit code %d.", err);
+		error("Failed to join the network.");
 		return err;
 	}
 
-	err = spawn_setup_on_other(&spawn, args.size, args.parent, args.here);
+	err = optpool_find_by_key_as_int(opts, "WatchdogTimeout", &timeout);
 	if (unlikely(err)) {
-		error("Failed to setup spawn instance.");
-		return err;
+		fcallerror("optpool_find_by_key_as_int", err);
+		timeout = 10;
 	}
 
-	/* FIXME In a real setup we will not know which address to bind to
-	 *       This information needs to be either passed via the command line
-	 *       (inflexible) or received as part of the MESSAGE_TYPE_RESPONSE_JOIN
-	 * 	 message. In the latter case we would need to move the bind
-	 *	 operation to a later stage and make sure that the communication
-	 *	 thread can properly handle the case where the listenfd is -1.
-	 *	 Which is complicated! It probably is easier to connect listenfd
-	 *       either to /dev/null or bind it to the loopback interface and
-	 *       modify it later!
-	 */
-	_localaddr(&sa);
-
-	err = spawn_bind_listenfd(&spawn, (struct sockaddr *)&sa, sizeof(sa));
-	if (unlikely(err)) {
-		error("Failed to bind the listenfd.");
-		return err;
-	}
-
-	err = _connect_to_parent(&spawn, &args.sa);
-	if (unlikely(err)) {
-		error("Failed to connect to parent process.");
-		return err;
-	}
-
-	err = spawn_comm_start(&spawn);
-	if (unlikely(err)) {
-		error("Failed to start the communication module.");
-		return err;
-	}
-
-	err = let_the_watchog_loose(60);	/* FIXME Make this parameter configurable.
-						 *	 But if it is configurable we cannot
-						 *       start the watchdog here but first
-						 *       need to receive the options from
-						 *       the parent.
-						 *	 We could also start with a hardcoded
-						 *       default and then change it afterwards!
-						 */
+	err = let_the_watchog_loose(timeout);
 	if (unlikely(err)) {
 		error("Failed to start the watchdog thread.");
 		/* continue anyway. */
 	}
 
-	err = alloc_job_join(alloc, args.parent, &job);
+	err = spawn_ctor(&spawn, alloc, opts, args.parent, args.here);
 	if (unlikely(err)) {
-		fcallerror("alloc_job_join", err);
-		goto fail;
-	}
-
-	list_insert_before(&spawn.jobs, &job->list);
-
-	err = loop(&spawn);
-	if (unlikely(err))
-		fcallerror("loop", err);	/* Continue anyway with a proper shutdown. */
-
-	err = spawn_comm_halt(&spawn);
-	if (unlikely(err)) {
-		error("Failed to halt the communication module.");
+		error("struct spawn constructor failed with exit code %d.", err);
 		return err;
 	}
+
+	err = network_add_ports(&spawn.tree, &fd, 1);
+	if (unlikely(err)) {
+		fcallerror("network_add_ports", err);
+		return err;
+	}
+
+	err = network_initialize_lft(&spawn.tree, 0);
+	if (unlikely(err)) {
+		fcallerror("network_initialize_lft", err);
+		return err;
+	}
+
+	err = _run_loop(&spawn);
+	if (unlikely(err))
+		return err;
 
 	err = spawn_dtor(&spawn);
 	if (unlikely(err)) {
@@ -311,23 +271,27 @@ static int _main_on_other(int argc, char **argv)
 	}
 
 	return 0;
-
-fail:
-	tmp = spawn_comm_halt(&spawn);
-	if (unlikely(tmp))
-		error("Failed to halt the communication module.");
-
-	return err;
 }
 
-/*
- * Fill sa with the loopback address and any port.
- */
-static int _localaddr(struct sockaddr_in *sa)
+static int _run_loop(struct spawn *spawn)
 {
-	memset(sa, 0, sizeof(*sa));
-	sa->sin_family = AF_INET;
-	sa->sin_addr.s_addr = htonl(IP4ADDR(127,0,0,1));
+	int err;
+
+	err = spawn_comm_start(spawn);
+	if (unlikely(err)) {
+		error("Failed to start the communication module.");
+		return err;
+	}
+
+	err = loop(spawn);
+	if (unlikely(err))
+		fcallerror("loop", err);	/* Continue anyway with a proper shutdown. */
+
+	err = spawn_comm_halt(spawn);
+	if (unlikely(err)) {
+		error("Failed to halt the communication module.");
+		return err;
+	}
 
 	return 0;
 }
@@ -394,46 +358,196 @@ static int _redirect_stdio()
 	return 0;
 }
 
-/*
- * Connect to the parent in the tree. This is done outside of the main loop.
- */
-static int _connect_to_parent(struct spawn *spawn, struct sockaddr_in *sa)
+static int _join(struct alloc *alloc, struct _args_other *args,
+                 int *fd, struct optpool **opts)
 {
 	int err;
-	int fd;
 
-	fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (unlikely(fd < 0)) {
+	err = _connect_to_parent(&args->sa, fd);
+	if (unlikely(err)) {
+		error("Failed to connect to parent process.");
+		return err;
+	}
+
+	err = _send_join_request(alloc, args->parent, args->here, *fd);
+	if (unlikely(err)) {
+		fcallerror("_join_send_request", err);
+		goto fail;
+	}
+
+	err = _recv_join_response(alloc, *fd, opts);
+	if (unlikely(err)) {
+		fcallerror("_join_recv_response", err);
+		goto fail;
+	}
+
+	debug("Successfully joined.");
+
+	return 0;
+
+fail:
+	do_close(*fd);
+
+	return err;
+}
+
+/*
+ * Connect to the parent in the tree.
+ */
+static int _connect_to_parent(struct sockaddr_in *sa, int *fd)
+{
+	int err;
+
+	*fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (unlikely((*fd) < 0)) {
 		error("socket() failed. errno = %d says '%s'.", errno, strerror(errno));
 		return -errno;
 	}
 
-	err = do_connect(fd, (struct sockaddr *)sa, sizeof(*sa));
+	err = do_connect(*fd, (struct sockaddr *)sa, sizeof(*sa));
 	if (unlikely(err))	/* Let do_connect() report the error. */
 		goto fail;
 
-	err = network_add_ports(&spawn->tree, &fd, 1);
+	debug("Connection to parent process established.");
+
+	return 0;
+
+fail:
+	do_close(*fd);
+
+	return err;
+}
+
+static int _send_join_request(struct alloc *alloc, int parent, int here, int fd)
+{
+	int tmp, err;
+	struct message_header       header;
+	struct message_request_join msg;
+	struct buffer buf;
+
+	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
+
+	header.src   = here;
+	header.dst   = parent;
+	header.flags = MESSAGE_FLAG_UCAST;
+	header.type  = MESSAGE_TYPE_REQUEST_JOIN;
+
+	msg.pid = getpid();
+
+	err = sockaddr(fd, &msg.ip, &msg.portnum);
+	if (unlikely(err))
+		return err;
+
+	/* Multiply by two to make sure that pack_message() does
+	 * not lead to a reallocation.
+	 */
+	err = buffer_ctor(&buf, alloc, 2*(sizeof(header) + sizeof(msg)));
 	if (unlikely(err)) {
-		fcallerror("network_add_ports", err);
+		fcallerror("buffer_ctor", err);
+		return err;
+	}
+
+	err = pack_message(&buf, &header, &msg);
+	if (unlikely(err)) {
+		fcallerror("pack_message", err);
 		goto fail;
 	}
 
-	/* Route all the traffic through this one port.
-	 * TODO The problem with this approach is that we have a valid LFT entry for a
-	 *      host that may be dead.
-	 */
-	err = network_initialize_lft(&spawn->tree, 0);
-	if (unlikely(err)) {
-		fcallerror("network_initialize_lft", err);
+	err = do_write_loop(fd, buf.buf, buf.size);
+	if (unlikely(err))
 		goto fail;
+
+	err = buffer_dtor(&buf);
+	if (unlikely(err)) {
+		fcallerror("buffer_dtor", err);
+		return err;
 	}
 
 	return 0;
 
 fail:
-	assert(err);
+	tmp = buffer_dtor(&buf);
+	if (unlikely(tmp))
+		fcallerror("buffer_dtor", tmp);
 
-	close(fd);
+	return err;
+}
+
+static int _recv_join_response(struct alloc *alloc, int fd,
+                               struct optpool **opts)
+{
+	int err, tmp;
+	struct message_header        header;
+	struct message_response_join msg;
+	struct buffer buf;
+
+	err = buffer_ctor(&buf, alloc, sizeof(header));
+	if (unlikely(err)) {
+		fcallerror("buffer_ctor", err);
+		return err;
+	}
+
+	err = buffer_resize(&buf, sizeof(header));
+	if (unlikely(err)) {
+		fcallerror("buffer_resize", err);
+		goto fail;
+	}
+
+	while (!buffer_pos_equal_size(&buf)) {
+		err = buffer_read(&buf, fd);
+		if (unlikely(err)) {
+			fcallerror("buffer_read", err);
+			goto fail;
+		}
+	}
+
+	err = secretly_copy_header(&buf, &header);
+	if (unlikely(err)) {
+		fcallerror("secretly_copy_message_header", err);
+		goto fail;
+	}
+
+	err = buffer_resize(&buf, sizeof(header) + header.payload);
+	if (unlikely(err)) {
+		fcallerror("buffer_resize", err);
+		goto fail;
+	}
+
+	while (!buffer_pos_equal_size(&buf)) {
+		err = buffer_read(&buf, fd);
+		if (unlikely(err)) {
+			fcallerror("buffer_read", err);
+			goto fail;
+		}
+	}
+
+	err = buffer_seek(&buf, sizeof(header));
+	if (unlikely(err)) {
+		fcallerror("buffer_seek", err);
+		goto fail;
+	}
+
+	err = unpack_message_payload(&buf, &header, alloc, &msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		goto fail;
+	}
+
+	*opts = msg.opts;
+
+	err = buffer_dtor(&buf);
+	if (unlikely(err)) {
+		fcallerror("buffer_dtor", err);
+		return err;
+	}
+
+	return 0;
+
+fail:
+	tmp = buffer_dtor(&buf);
+	if (unlikely(tmp))
+		fcallerror("buffer_dtor", tmp);
 
 	return err;
 }
@@ -506,6 +620,19 @@ static int _check_important_options(struct optpool *opts)
 		error("Missing 'Hosts' option.");
 		return -EINVAL;
 	}
+
+	return 0;
+}
+
+static int _ignore_sigpipe()
+{
+	struct sigaction act, oact;
+
+	act.sa_handler = SIG_IGN;
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = SA_RESTART;
+
+	sigaction(SIGPIPE, &act, &oact);
 
 	return 0;
 }

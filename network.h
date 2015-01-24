@@ -7,7 +7,6 @@
 
 struct alloc;
 
-
 /*
  * Network data structure.
  */
@@ -35,11 +34,12 @@ struct network
 	int		*ports;
 
 	/* Socket used to listen for connections from children in the tree.
-	 *
-	 * TODO To support more complex network setups we need multiple listenfds
-	 *      on different interfaces.
+	 * When running in a single broadcast domain such as a homogeneous
+	 * cluster usually only one file descriptor is needed.
 	 */
-	int		listenfd;
+#define NETWORK_MAX_LISTENFDS	8
+	int		nlistenfds;
+	int		listenfds[NETWORK_MAX_LISTENFDS];
 
 	/* New connection. The communication thread will accept a new connection
 	 * if newfd is not equal to -1. Access to newfd should be done by atomic
@@ -53,24 +53,13 @@ struct network
 	struct lock	lock;
 };
 
-/*
- * Initialize a network instance.
- */
 int network_ctor(struct network *self, struct alloc *alloc);
-
-/*
- * Destructor for struct network.
- */
 int network_dtor(struct network *self);
 
 /*
- * Lock.
+ * Acquire and release the lock protecting struct network members.
  */
 int network_lock_acquire(struct network *self);
-
-/*
- * Unlock.
- */
 int network_lock_release(struct network *self);
 
 /*
@@ -79,8 +68,12 @@ int network_lock_release(struct network *self);
 int network_resize(struct network *self, int size);
 
 /*
+ * Add new listening sockets.
+ */
+int network_add_listenfds(struct network *self, int *fds, int nfds);
+
+/*
  * Add some new ports to the network. The LFT is left unchanged.
- *
  * Make sure to hold the lock when calling this function.
  */
 int network_add_ports(struct network *self, int *fds, int nfds);

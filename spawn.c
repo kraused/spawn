@@ -1,4 +1,5 @@
 
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -29,54 +30,72 @@ static int _copy_up_to_char(const char *istr, char *ostr, int len, char x);
 static int _free_hosts(struct spawn* self);
 static int _setup_tree(struct network *self, struct alloc *alloc,
                        int size, int here);
-static int _tree_bind_listenfd(struct network *self, struct sockaddr *addr,
-                               ull addrlen);
-static int _tree_listen(struct network *self, int backlog);
 static int _tree_close_listenfd(struct network *self);
 
 
-int spawn_ctor(struct spawn *self, struct alloc *alloc)
+int spawn_ctor(struct spawn *self, struct alloc *alloc, struct optpool *opts,
+               int parent, int here)
 {
 	int err;
+	int bufpoolsz, sendqsz, recvqsz;
 
 	memset(self, 0, sizeof(*self));
 
-	self->alloc = alloc;
+	self->alloc  = alloc;
+	self->opts   = opts;
+	self->parent = parent;
+
+	err = _copy_hosts(self, opts);
+	if (unlikely(err))
+		return err;
 
 	err = hostinfo_ctor(&self->hostinfo, self->alloc);
 	if (unlikely(err)) {
 		error("struct hostinfo constructor failed with error %d.", err);
-		return err;
+		goto fail;
 	}
-
-	/* Do not allocate and initialize the opts member here. In the context of the master
-	 * process the main function will allocate it (since we need to have the configuration
-	 * parameters available early in the program). In the context of the other processes
-	 * the structure is allocated when the RESPONSE_JOIN message arrives.
-	 */
 
 	err = network_ctor(&self->tree, self->alloc);
 	if (unlikely(err)) {
 		error("struct network constructor failed with error %d.", err);
-		return err;
+		goto fail;
 	}
 
-	/* TODO We can easily make these parameters configurate in the context of the master
-	 *      process by reading CommBufpoolSize, CommSendqSize and CommRecvqSize from the
-	 *      configuration. The other processes do not have these availables though when
-	 *      calling spawn_ctor().
+	/* Since the master process needs to be part of the network we need
+	 * to increment the number of hosts.
 	 */
+	err = _setup_tree(&self->tree, self->alloc, self->nhosts + 1, here);
+	if (unlikely(err))
+		goto fail;
+
+	err = optpool_find_by_key_as_int(self->opts, "CommBufpoolSize", &bufpoolsz);
+	if (unlikely(err)) {
+		fcallerror("optpool_find_by_key_as_int", err);
+		bufpoolsz = 128;
+	}
 
 	err = buffer_pool_ctor(&self->bufpool,
-	                       self->alloc, 128);	/* FIXME Make this configurable. */
+	                       self->alloc, bufpoolsz);
 	if (unlikely(err)) {
 		error("struct buffer_pool constructor failed with error %d.", err);
 		return err;
 	}
 
+	err = optpool_find_by_key_as_int(self->opts, "CommSendqSize", &sendqsz);
+	if (unlikely(err)) {
+		fcallerror("optpool_find_by_key_as_int", err);
+		sendqsz = 128;
+	}
+
+	err = optpool_find_by_key_as_int(self->opts, "CommRecvqSize", &recvqsz);
+	if (unlikely(err)) {
+		fcallerror("optpool_find_by_key_as_int", err);
+		recvqsz = 128;
+	}
+
 	err = comm_ctor(&self->comm, self->alloc,
 	                &self->tree, &self->bufpool,
-			128, 128);			/* FIXME Make these configurable. */
+			sendqsz, recvqsz);
 	if (unlikely(err)) {
 		error("struct comm constructor failed with error %d.", err);
 		return err;
@@ -85,6 +104,11 @@ int spawn_ctor(struct spawn *self, struct alloc *alloc)
 	list_ctor(&self->jobs);
 
 	return 0;
+
+fail:
+	_free_hosts(self);
+
+	return err;
 }
 
 int spawn_dtor(struct spawn *self)
@@ -116,26 +140,24 @@ int spawn_dtor(struct spawn *self)
 		error("struct network destructor failed with error %d.", err);
 		return err;
 	}
-	
+
 	err = hostinfo_dtor(&self->hostinfo);
 	if (unlikely(err)) {
 		error("struct hostinfo destructor failed with error %d.", err);
 		return err;
 	}
 
-	if (self->opts) {
-		err = optpool_dtor(self->opts);
-		if (unlikely(err)) {
-			error("struct optpool destructor failed with error %d.", err);
-			return err;
-		}
+	err = optpool_dtor(self->opts);
+	if (unlikely(err)) {
+		error("struct optpool destructor failed with error %d.", err);
+		return err;
+	}
 
-		err = ZFREE(self->alloc, (void **)&self->opts, 1,
-		            sizeof(struct optpool), "");
-		if (unlikely(err)) {
-			fcallerror("ZFREE", err);
-			return err;
-		}
+	err = ZFREE(self->alloc, (void **)&self->opts, 1,
+	            sizeof(struct optpool), "");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
+		return err;
 	}
 
 	if (self->procs) {
@@ -163,49 +185,6 @@ int spawn_dtor(struct spawn *self)
 	}
 
 	memset(self, 0, sizeof(*self));
-
-	return 0;
-}
-
-int spawn_setup_on_local(struct spawn *self, struct optpool *opts)
-{
-	int err;
-
-	self->parent = -1;
-	self->opts   = opts;
-
-	err = _copy_hosts(self, opts);
-	if (unlikely(err))
-		return err;
-
-	/* Since the master process needs to be part of the network we need
-	 * to increment the number of hosts.
-	 */
-	err = _setup_tree(&self->tree, self->alloc, self->nhosts + 1, 0);
-	if (unlikely(err))
-		goto fail;
-
-	return 0;
-
-fail:
-	assert(err);
-
-	_free_hosts(self);
-
-	return err;
-}
-
-int spawn_setup_on_other(struct spawn *self, int nhosts,
-                         int parent, int here)
-{
-	int err;
-
-	self->nhosts = nhosts;
-	self->parent = parent;
-
-	err = _setup_tree(&self->tree, self->alloc, nhosts + 1, here);
-	if (unlikely(err))
-		return err;
 
 	return 0;
 }
@@ -288,35 +267,9 @@ fail:
 	return err;
 }
 
-int spawn_bind_listenfd(struct spawn *self, struct sockaddr *addr, ull addrlen)
-{
-	return _tree_bind_listenfd(&self->tree, addr, addrlen);
-}
-
 int spawn_comm_start(struct spawn *self)
 {
 	int err;
-	int backlog;
-
-	backlog = 8;
-
-	/* TODO We again have the typical chicken-egg problem. When starting to listen for
-	 *      connections we do not yet have the configuration key-value pairs available.
-	 *      However, at some point we need to fix the code anyway to reopen the socket
-	 *      and listen on the correct interface and then we would have the configuration
-	 *      available and could read out the backlog.
-	 */
-	if (self->opts) {
-		err = optpool_find_by_key_as_int(self->opts, "TreeSockBacklog", &backlog);
-		if (unlikely(err)) {
-			error("Could not read 'TreeSockBacklog' option. Using default value.");
-			backlog = 8;
-		}
-	}
-
-	err = _tree_listen(&self->tree, backlog);
-	if (unlikely(err))
-		return err;
 
 	err = comm_start_processing(&self->comm);
 	if (unlikely(err))
@@ -546,60 +499,18 @@ static int _setup_tree(struct network *self, struct alloc *alloc,
 	return 0;
 }
 
-static int _tree_bind_listenfd(struct network *self, struct sockaddr *addr,
-                               ull addrlen)
-{
-	int fd;
-	int err;
-
-	if (unlikely(-1 != self->listenfd)) {
-		error("File descriptor is valid on entry of spawn_start_listen().");
-		return -ESOMEFAULT;
-	}
-
-	fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (unlikely(fd < 0)) {
-		error("socket() failed. errno = %d says '%s'.", errno, strerror(errno));
-		return -errno;
-	}
-
-	err = bind(fd, addr, addrlen);
-	if (unlikely(err)) {
-		error("bind() failed. errno = %d says '%s'.", errno, strerror(errno));
-		close(fd);
-		return -errno;
-	}
-
-	self->listenfd = fd;
-
-	return 0;
-}
-
-static int _tree_listen(struct network *self, int backlog)
-{
-	int err;
-
-	err = listen(self->listenfd, backlog);
-	if (unlikely(err)) {
-		error("listen() failed. errno = %d says '%s'.", errno, strerror(errno));
-		return -errno;
-	}
-
-	return 0;
-}
-
 static int _tree_close_listenfd(struct network *self)
 {
 	int err;
+	int i;
 
-	if (unlikely(-1 == self->listenfd))
-		return -ESOMEFAULT;
+	for (i = 0; i < self->nlistenfds; ++i) {
+		err = do_close(self->listenfds[i]);
+		if (unlikely(err))
+			return err;	/* do_close() reported reason. */
 
-	err = do_close(self->listenfd);
-	if (unlikely(err))
-		return err;	/* do_close() reported reason. */
-
-	self->listenfd = -1;
+		self->listenfds[i] = -1;
+	}
 
 	return 0;
 }

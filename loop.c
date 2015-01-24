@@ -42,8 +42,6 @@ static int _insert_process_in_struct_spawn(struct spawn *spawn,
 static int _alloc_process_list_in_struct_spawn(struct spawn *spawn,
                                                struct job_build_tree *job);
 static struct process *_find_spawned_process_by_id(struct spawn *spawn, int id);
-static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
-static int _set_job_join_acked(struct spawn *spawn);
 static int _send_response_join(struct spawn *spawn, int dest);
 static int _handle_ping(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_request_exec(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
@@ -271,13 +269,14 @@ static int _handle_accept(struct spawn *spawn, int newfd)
 	 * lock.
 	 */
 	err = comm_stop_processing(&spawn->comm);
-	if (unlikely(err)) {
+	if (unlikely(err))
 		error("Failed to temporarily stop the communication thread.");
-	}
 
 	err = network_lock_acquire(&spawn->tree);
 	if (unlikely(err))
 		die();
+
+	debug("Adding new port %d to port list.", newfd);
 
 	err = network_add_ports(&spawn->tree, &newfd, 1);
 	if (unlikely(err)) {
@@ -318,9 +317,6 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 	switch (header.type) {
 	case MESSAGE_TYPE_REQUEST_JOIN:
 		err = _handle_request_join(spawn, &header, buffer);
-		break;
-	case MESSAGE_TYPE_RESPONSE_JOIN:
-		err = _handle_response_join(spawn, &header, buffer);
 		break;
 	case MESSAGE_TYPE_PING:
 		err = _handle_ping(spawn, &header, buffer);
@@ -546,75 +542,6 @@ static struct process *_find_spawned_process_by_id(struct spawn *spawn, int id)
 		}
 
 	return p;
-}
-
-static int _handle_response_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
-{
-	int err, tmp;
-	struct message_response_join msg;
-
-	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
-	if (unlikely(err)) {
-		fcallerror("unpack_message_payload", err);
-		die();	/* FIXME ?*/
-	}
-
-	if (unlikely(msg.addr != spawn->tree.here)) {
-		error("MESSAGE_TYPE_RESPONSE_JOIN message contains incorrect address %d.", (int )msg.addr);
-		die();  /* Makes no sense to continue. */
-	}
-
-	err = spawn_perform_delayed_setup(spawn, msg.opts);
-	if (unlikely(err)) {
-		fcallerror("spawn_performed_delayed_setup", err);
-		die();	/* State is unclear. */
-	}
-
-	msg.opts = NULL;
-
-	err = _set_job_join_acked(spawn);
-	if (unlikely(err))
-		goto fail;
-
-	err = free_message_payload(header, spawn->alloc, (void *)&msg);
-	if (unlikely(err)) {
-		fcallerror("free_message_payload", err);
-		return err;
-	}
-
-	return 0;
-
-fail:
-	tmp = free_message_payload(header, spawn->alloc, (void *)&msg);
-	if (unlikely(tmp))
-		fcallerror("free_message_payload", tmp);
-
-	return err;
-}
-
-static int _set_job_join_acked(struct spawn *spawn)
-{
-	int matches;
-	struct list *p;
-	struct job *job;
-
-	matches = 0;
-
-	LIST_FOREACH(p, &spawn->jobs) {
-		job = LIST_ENTRY(p, struct job, list);
-
-		if (JOB_TYPE_JOIN == job->type) {
-			((struct job_join *)job)->acked = 1;
-			++matches;
-		}
-	}
-
-	if (1 != matches) {
-		error("Found %d jobs of type JOB_TYPE_JOIN instead of just one.", matches);
-		return -ESOMEFAULT;
-	}
-
-	return 0;
 }
 
 static int _send_response_join(struct spawn *spawn, int dest)
@@ -1049,9 +976,8 @@ static int _fix_lft(struct spawn *spawn, int port, int *ids, int nids)
 	 * may happen that we wait for seconds before acquiring the lock.
 	 */
 	err = comm_stop_processing(&spawn->comm);
-	if (unlikely(err)) {
+	if (unlikely(err))
 		error("Failed to temporarily stop the communication thread.");
-	}
 
 	err = network_lock_acquire(&spawn->tree);
 	if (unlikely(err))
@@ -1148,6 +1074,8 @@ static int _declare_child_ready(struct job_build_tree *job, int id)
 		error("Incorrect state %d (expected ALIVE = %d)",
 		      child->state, ALIVE);
 	}
+
+	debug("Declaring child %d ready.", child->id);
 
 	child->state = READY;
 
