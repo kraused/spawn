@@ -457,7 +457,7 @@ static int _copy_hosts(struct spawn *self, struct optpool *opts)
 
 	j = 0;
 	for (i = 0; i < self->nhosts; ++i) {
-		if (0 != hosts[j])
+		if (',' == hosts[j])
 			++j;
 		j += _copy_up_to_char(hosts + j, host, sizeof(host), ',');
 
