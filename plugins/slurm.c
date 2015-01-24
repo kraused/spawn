@@ -1,4 +1,5 @@
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,6 +16,7 @@ static int _exec(struct exec_plugin *self,
                  const char *host,
                  char *const *argv);
 static char **_combine_argv(char *const *oargv, const char *host);
+static char **_prepare_env();
 
 static const char *_slurm_argv[] = {
 	"/usr/bin/srun",
@@ -58,15 +60,15 @@ static int _exec(struct exec_plugin *self,
 	long long child;
 	long long p;
 	int status;
+	char **env;
 
 	if (unlikely(!host))
 		return -EINVAL;
 
 	child = fork();
 	if (0 == child) {
-		char *env[] = {NULL};
-
 		argv = _combine_argv(argv, host);
+		env  = _prepare_env();
 
 		execve(argv[0], argv, env);
 		error("execve() failed. errno = %d says '%s'.",
@@ -114,8 +116,10 @@ static char **_combine_argv(char *const *oargv, const char *host)
 	++i;
 
 	argv = malloc((i + 1 + sizeof(_slurm_argv)/sizeof(_slurm_argv[0]))*sizeof(char *));
-	if (unlikely(!argv))
+	if (unlikely(!argv)) {
+		error("malloc() returned. NULL");
 		return NULL;
+	}
 
 	/* We can freely strdup() in here since _combine_argv() is called by
 	 * the forked process which will next execute an execve() call.
@@ -136,5 +140,37 @@ static char **_combine_argv(char *const *oargv, const char *host)
 	argv[i] = NULL;
 
 	return argv;
+}
+
+static char **_prepare_env()
+{
+	char **env;
+	char *jobid;
+
+	/* FIXME This is a bit of hack. It would be better to retrieve the job id from
+	 *       the options rather than the environment.
+	 */
+
+	jobid = getenv("SLURM_JOB_ID");
+	if (unlikely(!jobid)) {
+		error("SLURM_JOB_ID is not set.");
+		return NULL;
+	}
+
+	env = malloc(2*sizeof(char**));
+	if (unlikely(!env)) {
+		error("malloc() returned. NULL");
+		return NULL;
+	}
+
+	env[1] = NULL;
+	env[0] = malloc(13 + strlen(jobid) + 1);
+	if (unlikely(!env[0])) {
+		error("malloc() returned. NULL");
+		return NULL;
+	}
+	snprintf(env[0], 13 + strlen(jobid) + 1, "SLURM_JOB_ID=%s", jobid);
+
+	return env;
 }
 
