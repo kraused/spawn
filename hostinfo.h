@@ -22,18 +22,19 @@ struct hostinfo
 	 * and ignore AF_INET6 for now.
 	 */
 	int			nipv4ifs;
-	struct _ipv4interface	*ipv4ifs;
+	struct ipv4interface	*ipv4ifs;
 
 	/* Routing table.
 	 */
 	int			nroutes;
-	struct _route		*routes;
+	struct route		*routes;
+	struct route		*defroute;
 };
 
 /*
  * A network interface (IPv4).
  */
-struct _ipv4interface
+struct ipv4interface
 {
 	int			index;
 	char			name[IFNAMSIZ];
@@ -41,16 +42,29 @@ struct _ipv4interface
 	struct sockaddr_in	netmask;
 };
 
-struct _route
+struct route
 {
 	struct sockaddr_in	dest;
 	struct sockaddr_in	genmask;
-	struct _ipv4interface	*iface;
+	struct ipv4interface	*iface;
 };
 
 
 int hostinfo_ctor(struct hostinfo *self, struct alloc *alloc);
 int hostinfo_dtor(struct hostinfo *self);
+
+/*
+ * For a given hostname find the interface through which the node is reachable.
+ */
+int map_hostname_to_interface(struct hostinfo *hi, const char *host,
+                              struct ipv4interface **iface);
+
+/*
+ * For a given IPv4 address find the interface through which the node is reachable.
+ */
+int map_address_to_interface(struct hostinfo *hi,
+                             const struct sockaddr_in *addr,
+                             struct ipv4interface **iface);
 
 #endif
 

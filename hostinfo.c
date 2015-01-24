@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 
@@ -26,7 +27,7 @@ struct _interim_route
 };
 
 static int _query_ipv4interfaces(struct alloc *alloc, int *nifs,
-                                 struct _ipv4interface **ifs);
+                                 struct ipv4interface **ifs);
 static int _do_ifconf_ioctl(int sock, struct alloc *alloc,
                             struct ifconf* ifc);
 static int _hostinfo_query_routes(struct hostinfo *self);
@@ -76,7 +77,7 @@ int hostinfo_dtor(struct hostinfo *self)
 	int err;
 
 	err = ZFREE(self->alloc, (void **)&self->ipv4ifs, self->nipv4ifs,
-	            sizeof(struct _ipv4interface), "");
+	            sizeof(struct ipv4interface), "");
 	if (unlikely(err)) {
 		fcallerror("ZFREE", err);
 		return err;
@@ -85,8 +86,82 @@ int hostinfo_dtor(struct hostinfo *self)
 	return 0;
 }
 
+int map_hostname_to_interface(struct hostinfo *hi, const char *host,
+                              struct ipv4interface **iface)
+{
+	int err;
+	struct sockaddr_in addr;
+        struct addrinfo hints;
+        struct addrinfo *ailist;
+        struct addrinfo *aip;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_flags    = AI_CANONNAME;
+	hints.ai_family   = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
+
+	err = getaddrinfo(host, NULL, &hints, &ailist);
+	if (unlikely(err)) {
+		error("getaddrinfo() for host '%s' failed with exit code %d (means '%s').",
+		      host, err, gai_strerror(err));
+		return err;	/* seems like the EAI_* constants are
+				 * negative on Linux.
+				 */
+	}
+
+	aip  = ailist;
+	addr = *(struct sockaddr_in *)aip->ai_addr;
+
+	debug("getaddrinfo() for host '%s' returned %s.", host, inet_ntoa(addr.sin_addr));
+
+	freeaddrinfo(aip);
+
+	return map_address_to_interface(hi, &addr, iface);
+}
+
+int map_address_to_interface(struct hostinfo *hi,
+                             const struct sockaddr_in *addr,
+                             struct ipv4interface **iface)
+{
+	int i;
+	int a, b, c;
+
+	/* TODO: Go through lo if addr == 172.0.0.1
+	 */
+
+	*iface = NULL;
+
+	a = ntohl(addr->sin_addr.s_addr);
+
+	for (i = 0; i < hi->nipv4ifs; ++i) {
+		if (hi->defroute == &hi->routes[i])
+			continue;
+
+		b = ntohl(hi->routes[i].genmask.sin_addr.s_addr);
+		c = ntohl(hi->routes[i].dest.sin_addr.s_addr);
+
+		if ((a & b) == c) {
+			*iface = hi->routes[i].iface;
+
+			debug("map_address_to_interface() for addr %s gives %s.",
+			      inet_ntoa(addr->sin_addr), (*iface)->name);
+		}
+	}
+
+	if (!(*iface)) {
+		*iface = hi->defroute->iface;
+
+		debug("map_address_to_interface() for addr %s gives %s (default route).",
+		      inet_ntoa(addr->sin_addr), (*iface)->name);
+	}
+
+	return 0;
+}
+
+
 static int _query_ipv4interfaces(struct alloc *alloc, int *nifs,
-                                 struct _ipv4interface **ifs)
+                                 struct ipv4interface **ifs)
 {
 	int err, tmp;
 	int sock;
@@ -116,7 +191,7 @@ static int _query_ipv4interfaces(struct alloc *alloc, int *nifs,
 	*nifs = n;
 
 	err = ZALLOC(alloc, (void **)ifs, (*nifs),
-	             sizeof(struct _ipv4interface), "ifs");
+	             sizeof(struct ipv4interface), "ifs");
 	if (unlikely(err)) {
 		fcallerror("ZALLOC", err);
 		return err;
@@ -187,7 +262,7 @@ fail:
 		fcallerror("ZFREE", tmp);
 
 	tmp = ZFREE(alloc, (void **)ifs, (*nifs),
-	            sizeof(struct _ipv4interface), "");
+	            sizeof(struct ipv4interface), "");
 	if (unlikely(tmp))
 		fcallerror("ZFREE", tmp);
 
@@ -491,7 +566,7 @@ static int _hostinfo_copy_routes(struct hostinfo *self,
 	char buf1[64], buf2[64];
 
 	err = ZALLOC(self->alloc, (void **)&self->routes,
-	             self->nroutes, sizeof(struct _route), "routes");
+	             self->nroutes, sizeof(struct route), "routes");
 	if (unlikely(err)) {
 		fcallerror("ZALLOC", err);
 		return err;
@@ -514,17 +589,25 @@ static int _hostinfo_copy_routes(struct hostinfo *self,
 			goto fail;
 		}
 
-		strcpy(buf1, inet_ntoa(self->routes[i].dest.sin_addr));
-		strcpy(buf2, inet_ntoa(self->routes[i].genmask.sin_addr));
+		if (0 == self->routes[i].dest.sin_addr.s_addr) {
+			self->defroute = &self->routes[i];
 
-		debug("Routing to %s/%s via %s.", buf1, buf2, self->routes[i].iface->name);
+			debug("Routing default via %s.",
+			      self->routes[i].iface->name);
+		} else {
+			strcpy(buf1, inet_ntoa(self->routes[i].dest.sin_addr));
+			strcpy(buf2, inet_ntoa(self->routes[i].genmask.sin_addr));
+
+			debug("Routing to %s/%s via %s.", buf1, buf2,
+			      self->routes[i].iface->name);
+		}
 	}
 
 	return 0;
 
 fail:
 	tmp = ZFREE(self->alloc, (void **)&self->routes,
-                     self->nroutes, sizeof(struct _route), "routes");
+                     self->nroutes, sizeof(struct route), "routes");
 	if (unlikely(tmp))
 		fcallerror("ZFREE", tmp);
 
