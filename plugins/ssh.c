@@ -104,7 +104,7 @@ static int _exec(struct exec_plugin *self,
 		log("Child was terminated by signal %d.", WTERMSIG(status));
 		return -ESOMEFAULT;
 	} else {
-		error("Child neithr terminated nor was terminated by a signal.");
+		error("Child neither terminated nor was terminated by a signal.");
 		return -ESOMEFAULT;
 	}
 
