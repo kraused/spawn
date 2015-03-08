@@ -82,7 +82,7 @@ int strfree(struct alloc *alloc, char **str);
 /*
  * Duplicate an array of strings.
  */
-int array_of_str_dup(struct alloc *alloc, int n, const char *const *istr,
+int array_of_str_dup(struct alloc *alloc, int n, char **istr,
                      char ***ostr);
 
 /*

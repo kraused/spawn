@@ -18,6 +18,9 @@ struct task
 	struct task_plugin	*plu;
 	struct thread		thread;
 
+	int			argc;
+	char 			**argv;
+
 	/* Communication channel allocated for this task.
 	 */
 	int			channel;
@@ -28,7 +31,7 @@ struct task
  */
 int task_ctor(struct task *self, struct alloc *alloc,
               struct spawn *spawn, const char *path,
-              int channel);
+              int argc, char **argv, int channel);
 int task_dtor(struct task *self);
 
 /*

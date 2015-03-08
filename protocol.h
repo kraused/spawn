@@ -111,6 +111,8 @@ struct message_response_build_tree
 struct message_request_task
 {
 	const char	*path;
+	ui64		argc;
+	char 		**argv;
 	ui32		channel;
 };
 

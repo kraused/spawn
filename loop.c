@@ -650,7 +650,7 @@ static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
 	}
 
 	err = array_of_str_dup(wkpool->alloc, (msg->argc + 1),
-	                       (const char **)msg->argv, &(*wkitem)->argv);
+	                       msg->argv, &(*wkitem)->argv);
 	if (unlikely(err)) {
 		fcallerror("array_of_str_dup", err);
 		goto fail2;
@@ -801,7 +801,9 @@ static int _handle_request_task(struct spawn *spawn, struct message_header *head
 		die();	/* FIXME ?*/
 	}
 
-	err = alloc_job_task(spawn->alloc, msg.path, msg.channel, &job);
+	err = alloc_job_task(spawn->alloc, msg.path,
+	                     msg.argc, msg.argv,
+	                     msg.channel, &job);
 	if (unlikely(err)) {
 		fcallerror("alloc_job_task", err);
 		goto fail;

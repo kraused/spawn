@@ -250,7 +250,7 @@ int strfree(struct alloc *alloc, char **str)
 	return 0;
 }
 
-int array_of_str_dup(struct alloc *alloc, int n, const char *const *istr,
+int array_of_str_dup(struct alloc *alloc, int n, char **istr,
                      char ***ostr)
 {
 	int err;

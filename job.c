@@ -1,6 +1,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 
 #include <unistd.h>
 #include <sys/socket.h>
@@ -37,11 +38,14 @@ static int _send_request_build_tree_message(struct job_build_tree *self, struct 
                                             int dest, int nhosts, si32 *hosts);
 static int _send_response_build_tree_message(struct job_build_tree *self, struct spawn *spawn);
 static int _job_task_ctor(struct job_task *self, struct alloc *alloc,
-                          const char *path, ui16 channel);
+                          const char *path, int argc, char **argv,
+                          ui16 channel);
 static int _job_task_dtor(struct job_task *self);
 static int _free_job_task(struct alloc *alloc, struct job_task **self);
 static int _task_work(struct job *job, struct spawn *spawn, int *completed);
-static int _task_send_request(struct spawn *spawn, const char *path, ui16 channel);
+static int _task_send_request(struct spawn *spawn, const char *path,
+                              int argc, char **argv,
+                              ui16 channel);
 static int _task_send_response(struct spawn *spawn, int ret);
 static int _job_exit_ctor(struct job_exit *self, struct alloc *alloc,
                           const struct timespec *timeout);
@@ -70,6 +74,7 @@ int alloc_job_build_tree(struct alloc *alloc, struct spawn *spawn,
 }
 
 int alloc_job_task(struct alloc *alloc, const char* path,
+                   int argc, char **argv,
                    ui16 channel, struct job **self)
 {
 	int err;
@@ -81,7 +86,7 @@ int alloc_job_task(struct alloc *alloc, const char* path,
 		return err;
 	}
 
-	return _job_task_ctor((struct job_task *)*self, alloc, path, channel);
+	return _job_task_ctor((struct job_task *)*self, alloc, path, argc, argv, channel);
 }
 
 int alloc_job_exit(struct alloc *alloc, const struct timespec *timeout,
@@ -632,7 +637,8 @@ static int _send_response_build_tree_message(struct job_build_tree *self, struct
 }
 
 static int _job_task_ctor(struct job_task *self, struct alloc *alloc,
-                          const char *path, ui16 channel)
+                          const char *path, int argc, char **argv,
+                          ui16 channel)
 {
 	int err;
 
@@ -647,10 +653,16 @@ static int _job_task_ctor(struct job_task *self, struct alloc *alloc,
 	}
 
 	self->channel = channel;
-	self->argv    = NULL;	/* FIXME */
+	self->argc    = argc;
 	self->task    = NULL;
 	self->phase   = 1;
 	self->acks    = 0;
+
+	err = array_of_str_dup(alloc, argc + 1, argv, &self->argv);
+	if (unlikely(err)) {
+		fcallerror("array_of_str_dup", err);
+		return err;
+	}
 
 	list_ctor(&self->job.list);
 
@@ -660,10 +672,17 @@ static int _job_task_ctor(struct job_task *self, struct alloc *alloc,
 static int _job_task_dtor(struct job_task *self)
 {
 	int err;
+	struct alloc *alloc = self->job.alloc;
 
-	err = strfree(self->job.alloc, &self->path);
+	err = strfree(alloc, &self->path);
 	if (unlikely(err)) {
 		fcallerror("strfree", err);
+		return err;
+	}
+
+	err = array_of_str_free(alloc, self->argc + 1, &self->argv);
+	if (unlikely(err)) {
+		fcallerror("array_of_str_free", err);
 		return err;
 	}
 
@@ -698,7 +717,9 @@ static int _task_work(struct job *job, struct spawn *spawn, int *completed)
 	 */
 	if (1 == self->phase) {
 		if (0 == spawn->tree.here) {
-			err = _task_send_request(spawn, self->path, self->channel);
+			err = _task_send_request(spawn, self->path,
+			                         self->argc, self->argv,
+			                         self->channel);
 			if (unlikely(err))
 				fcallerror("_task_send_request", err);
 		}
@@ -711,7 +732,9 @@ static int _task_work(struct job *job, struct spawn *spawn, int *completed)
 		}
 
 		err = task_ctor(self->task, spawn->alloc, spawn,
-		                self->path, self->channel);
+		                self->path,
+		                self->argc, self->argv,
+		                self->channel);
 		if (unlikely(err)) {
 			fcallerror("task_ctor", err);
 			return err;
@@ -772,7 +795,8 @@ static int _task_work(struct job *job, struct spawn *spawn, int *completed)
 	return 0;
 }
 
-static int _task_send_request(struct spawn *spawn, const char *path, ui16 channel)
+static int _task_send_request(struct spawn *spawn, const char *path,
+                              int argc, char **argv, ui16 channel)
 {
 	int err;
 	struct message_header       header;
@@ -786,6 +810,8 @@ static int _task_send_request(struct spawn *spawn, const char *path, ui16 channe
 	header.type  = MESSAGE_TYPE_REQUEST_TASK;
 
 	msg.path    = path;
+	msg.argc    = argc;
+	msg.argv    = argv;
 	msg.channel = channel;
 
 	err = spawn_send_message(spawn, &header, (void *)&msg);
@@ -963,6 +989,10 @@ static int _prepare_task_job(struct spawn *spawn)
 	int err;
 	struct job *job;
 	const char *plugin;
+	const char *args;
+	int n, i, j, argc;
+	char **argv;
+	char *p;
 	ui16 channel;
 
 	plugin = optpool_find_by_key(spawn->opts, "TaskPlugin");
@@ -971,15 +1001,87 @@ static int _prepare_task_job(struct spawn *spawn)
 		return -EINVAL;
 	}
 
+	/* TODO A disadvantage of splitting the string ourselves is that
+	 *      it is tricky to be completely bash conforming. For example,
+	 *      the algorithm below will not take quotes into account.
+	 */
+
+	args = optpool_find_by_key(spawn->opts, "TaskArgv");
+
+	argc = 0;
+	if (likely(args)) {
+		/* Strip initial whitespaces from the string.
+		 */
+		while ((*args) && isspace(*args)) ++args;
+
+		i = 0;
+		while (args[i]) {
+			/* Skip the word. */
+			while (args[i] && (!isspace(args[i]))) ++i;
+			/* Skip whitespaces. */
+			while (args[i] &&   isspace(args[i]) ) ++i;
+
+			if (args[i])
+				++argc;
+		}
+
+		/* Above we counted the number of whitespace holes in
+		 * the string so the number of arguments is that number
+		 * plus one.
+		 */
+		++argc;
+	}
+
+	err = ZALLOC(spawn->alloc, (void **)&argv, (argc + 1), sizeof(char *), "");
+
+	argv[0] = NULL;
+	if (likely(args)) {
+		err = xstrdup(spawn->alloc, args, &p);
+		if (unlikely(err)) {
+			fcallerror("xstrdup", err);
+			return err;
+		}
+
+		n = strlen(p);
+
+		i = 0;
+		while (p[i]) {
+			argv[j++] = &p[i];
+
+			/* skip word */
+			while (p[i] && (!isspace(p[i]))) ++i;
+			/* skip whitespaces */
+			while (p[i] &&   isspace(p[i]) )
+				p[i++] = 0;
+		}
+	}
+
 	err = spawn_comm_resv_channel(spawn, &channel);
 	if (unlikely(err)) {
 		fcallerror("spawn_comm_alloc_channel", err);
 		channel = 1;
 	}
 
-	err = alloc_job_task(spawn->alloc, plugin, channel, &job);
+
+	err = alloc_job_task(spawn->alloc, plugin,
+	                     argc, argv,
+	                     channel, &job);
 	if (unlikely(err)) {
 		fcallerror("alloc_job_task", err);
+		return err;
+	}
+
+	if (likely(argc)) {
+		err = ZFREE(spawn->alloc, (void **)&argv[0], (n + 1), sizeof(char), "");
+		if (unlikely(err)) {
+			fcallerror("ZFREE", err);
+			return err;
+		}
+	}
+
+	err = ZFREE(spawn->alloc, (void **)&argv, (argc + 1), sizeof(char *), "");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
 		return err;
 	}
 

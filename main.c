@@ -358,6 +358,11 @@ static int _redirect_stdio()
 	return 0;
 }
 
+/*
+ * TODO Introduce a timeout for _join(). The watchdog is not yet running
+ *      and _join() may block indefinitely so that processes may survive
+ *      in case of a failure.
+ */
 static int _join(struct alloc *alloc, struct _args_other *args,
                  int *fd, struct optpool **opts)
 {

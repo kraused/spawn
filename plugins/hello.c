@@ -15,6 +15,7 @@ static int _local(struct task_plugin *self,
                   int argc, char **argv);
 static int _other(struct task_plugin *self,
                   int argc, char **argv);
+static void _log_argv(int argc, char **argv);
 
 static struct task_plugin_ops _hello_ops = {
 	.local = _local,
@@ -47,6 +48,7 @@ static int _local(struct task_plugin *self,
                   int argc, char **argv)
 {
 	log("Hello world!");
+	_log_argv(argc, argv);
 
 	return 0;
 }
@@ -55,7 +57,17 @@ static int _other(struct task_plugin *self,
                   int argc, char **argv)
 {
 	log("Hello world!");
+	_log_argv(argc, argv);
 
 	return 0;
+}
+
+static void _log_argv(int argc, char **argv)
+{
+	int i;
+
+	log("argc = %d", argc);
+	for (i = 0; argv[i]; ++i)
+		log("argv[%d] = %s", i, argv[i]);
 }
 

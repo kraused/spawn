@@ -16,7 +16,7 @@ static int _thread_main(void *arg);
 
 int task_ctor(struct task *self, struct alloc *alloc,
               struct spawn *spawn, const char *path,
-              int channel)
+              int argc, char **argv, int channel)
 {
 	int err;
 	struct plugin *plu;
@@ -41,6 +41,14 @@ int task_ctor(struct task *self, struct alloc *alloc,
 		return err;
 	}
 
+	self->argc = argc;
+
+	err = array_of_str_dup(self->alloc, argc + 1, argv, &self->argv);
+	if (unlikely(err)) {
+		fcallerror("array_of_str_dup", err);
+		return err;
+	}
+
 	return 0;
 }
 
@@ -51,6 +59,12 @@ int task_dtor(struct task *self)
 	err = thread_dtor(&self->thread);
 	if (unlikely(err)) {
 		fcallerror("thread_dtor", err);
+		return err;
+	}
+
+	err = array_of_str_free(self->alloc, self->argc + 1, &self->argv);
+	if (unlikely(err)) {
+		fcallerror("array_of_str_free", err);
 		return err;
 	}
 
@@ -89,9 +103,9 @@ static int _thread_main(void *arg)
 	int err;
 
 	if (0 == self->spawn->tree.here) {
-		err = self->plu->ops->local(self->plu, 0, NULL);
+		err = self->plu->ops->local(self->plu, self->argc, self->argv);
 	} else {
-		err = self->plu->ops->other(self->plu, 0, NULL);
+		err = self->plu->ops->other(self->plu, self->argc, self->argv);
 	}
 
 	return err;

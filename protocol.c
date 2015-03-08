@@ -747,6 +747,10 @@ static int _pack_message_request_task(struct buffer *buffer,
 	if (unlikely(err))
 		return err;
 
+	err = buffer_pack_array_of_str(buffer, (msg->argc + 1), msg->argv);
+	if (unlikely(err))
+		return err;
+
 	err = buffer_pack_ui32(buffer, &msg->channel, 1);
 	if (unlikely(err))
 		return err;
@@ -764,6 +768,14 @@ static int _unpack_message_request_task(struct buffer *buffer,
 	if (unlikely(err))
 		return err;
 
+	err = buffer_unpack_array_of_str(buffer, alloc,
+	                                 &msg->argc, (char ***)&msg->argv);
+	if (unlikely(err))
+		return err;
+
+	--msg->argc;	/* argv has always size argc + 1 with argv[argc] == NULL. */
+
+
 	err = buffer_unpack_ui32(buffer, &msg->channel, 1);
 	if (unlikely(err))
 		return err;
@@ -775,6 +787,10 @@ static int _free_message_request_task(struct alloc *alloc,
                                       const struct message_request_task *msg)
 {
 	int err;
+
+	err = array_of_str_free(alloc, (msg->argc + 1), (char ***)&msg->argv);
+	if (unlikely(err))
+		return err;	/* array_of_str_free() reports reason. */
 
 	err = strfree(alloc, (char **)&msg->path);
 	if (unlikely(err))
