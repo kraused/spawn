@@ -126,7 +126,7 @@ int loop(struct spawn *spawn)
 		 */
 
 		clock_gettime(CLOCK_REALTIME, &ts);
-		ts.tv_sec += 1;	/* FIXME timeout value */
+		ts.tv_nsec += 1000000;	/* FIXME timeout value */
 
 		while (!_work_available(spawn)) {
 			err = cond_var_timedwait(&spawn->comm.cond, &ts);
