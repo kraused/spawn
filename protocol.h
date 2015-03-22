@@ -30,6 +30,8 @@ enum
 	MESSAGE_TYPE_RESPONSE_TASK,
 	MESSAGE_TYPE_REQUEST_EXIT,
 	MESSAGE_TYPE_RESPONSE_EXIT,
+	MESSAGE_TYPE_WRITE_STDOUT,
+	MESSAGE_TYPE_WRITE_STDERR
 };
 
 /*
@@ -129,6 +131,16 @@ struct message_request_exit
 struct message_response_exit
 {
 	ui32		dummy;
+};
+
+struct message_write_stdout
+{
+	const char	*lines;
+};
+
+struct message_write_stderr
+{
+	const char	*lines;
 };
 
 /*

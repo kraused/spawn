@@ -56,6 +56,8 @@ static int _handle_response_task(struct spawn *spawn, struct message_header *hea
 static struct job_task *_find_job_task(struct spawn *spawn);
 static int _handle_request_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_response_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_write_stdout(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_write_stderr(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static struct job_exit *_find_job_exit(struct spawn *spawn);
 static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum);
 static int _fix_lft(struct spawn *spawn, int port, int *ids, int nids);
@@ -341,6 +343,12 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 		break;
 	case MESSAGE_TYPE_RESPONSE_EXIT:
 		err = _handle_response_exit(spawn, &header, buffer);
+		break;
+	case MESSAGE_TYPE_WRITE_STDOUT:
+		err = _handle_write_stdout(spawn, &header, buffer);
+		break;
+	case MESSAGE_TYPE_WRITE_STDERR:
+		err = _handle_write_stderr(spawn, &header, buffer);
 		break;
 	default:
 		error("Dropping unexpected message of type %d from %d.", header.type, header.src);
@@ -940,6 +948,50 @@ fail:
 		fcallerror("free_message_payload", tmp);
 
 	return err;
+}
+
+static int _handle_write_stdout(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	int err;
+	struct message_write_stdout msg;
+
+	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		die();	/* FIXME ?*/
+	}
+
+	fprintf(stdout, msg.lines);
+
+	err = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("free_message_payload", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static int _handle_write_stderr(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	int err;
+	struct message_write_stderr msg;
+
+	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		die();	/* FIXME ?*/
+	}
+
+	fprintf(stderr, msg.lines);
+
+	err = free_message_payload(header, spawn->alloc, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("free_message_payload", err);
+		return err;
+	}
+
+	return 0;
 }
 
 static struct job_exit *_find_job_exit(struct spawn *spawn)

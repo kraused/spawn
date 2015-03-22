@@ -82,6 +82,20 @@ static int _unpack_message_response_exit(struct buffer *buffer,
                                          struct message_response_exit *msg);
 static int _free_message_response_exit(struct alloc *alloc,
                                        const struct message_response_exit *msg);
+static int _pack_message_write_stdout(struct buffer *buffer,
+                                      const struct message_write_stdout *msg);
+static int _unpack_message_write_stdout(struct buffer *buffer,
+                                        struct alloc *alloc,
+                                        struct message_write_stdout *msg);
+static int _free_message_write_stdout(struct alloc *alloc,
+                                      const struct message_write_stdout *msg);
+static int _pack_message_write_stderr(struct buffer *buffer,
+                                      const struct message_write_stderr *msg);
+static int _unpack_message_write_stderr(struct buffer *buffer,
+                                        struct alloc *alloc,
+                                        struct message_write_stderr *msg);
+static int _free_message_write_stderr(struct alloc *alloc,
+                                      const struct message_write_stderr *msg);
 
 
 int pack_message_header(struct buffer *buffer,
@@ -273,6 +287,14 @@ static int _pack_message_something(struct buffer *buffer, int type, void *msg)
 		err = _pack_message_response_exit(buffer,
 		                    (const struct message_response_exit *)msg);
 		break;
+	case MESSAGE_TYPE_WRITE_STDOUT:
+		err = _pack_message_write_stdout(buffer,
+		                    (const struct message_write_stdout *)msg);
+		break;
+	case MESSAGE_TYPE_WRITE_STDERR:
+		err = _pack_message_write_stderr(buffer,
+		                    (const struct message_write_stderr *)msg);
+		break;
 	default:
 		error("Unknown message type %d.", type);
 		err = -ESOMEFAULT;
@@ -330,6 +352,14 @@ static int _alloc_message_something(struct alloc *alloc, int type, void **msg)
 	case MESSAGE_TYPE_RESPONSE_EXIT:
 		err = ZALLOC(alloc, msg, 1, sizeof(struct message_response_exit),
 		             "struct message_response_exit");
+		break;
+	case MESSAGE_TYPE_WRITE_STDOUT:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_write_stdout),
+		             "struct message_write_stdout");
+		break;
+	case MESSAGE_TYPE_WRITE_STDERR:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_write_stderr),
+		             "struct message_write_stderr");
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -392,6 +422,14 @@ static int _unpack_message_something(struct buffer *buffer, struct alloc *alloc,
 		err = _unpack_message_response_exit(buffer,
 		                    (struct message_response_exit *)msg);
 		break;
+	case MESSAGE_TYPE_WRITE_STDOUT:
+		err = _unpack_message_write_stdout(buffer, alloc,
+		                    (struct message_write_stdout *)msg);
+		break;
+	case MESSAGE_TYPE_WRITE_STDERR:
+		err = _unpack_message_write_stderr(buffer, alloc,
+		                    (struct message_write_stderr *)msg);
+		break;
 	default:
 		error("Unknown message type %d.", type);
 		err = -ESOMEFAULT;
@@ -449,6 +487,14 @@ static int _free_message_something(struct alloc *alloc, int type, void *msg)
 	case MESSAGE_TYPE_RESPONSE_EXIT:
 		err = _free_message_response_exit(alloc,
 		                    (struct message_response_exit *)msg);
+		break;
+	case MESSAGE_TYPE_WRITE_STDOUT:
+		err = _free_message_write_stdout(alloc,
+		                    (struct message_write_stdout *)msg);
+		break;
+	case MESSAGE_TYPE_WRITE_STDERR:
+		err = _free_message_write_stderr(alloc,
+		                    (struct message_write_stderr *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -887,6 +933,80 @@ static int _unpack_message_response_exit(struct buffer *buffer,
 static int _free_message_response_exit(struct alloc *alloc,
                                        const struct message_response_exit *msg)
 {
+	return 0;
+}
+
+static int _pack_message_write_stdout(struct buffer *buffer,
+                                      const struct message_write_stdout *msg)
+{
+	int err;
+
+	err = buffer_pack_string(buffer, msg->lines);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _unpack_message_write_stdout(struct buffer *buffer,
+                                        struct alloc *alloc,
+                                        struct message_write_stdout *msg)
+{
+	int err;
+
+	err = buffer_unpack_string(buffer, alloc, (char **)&msg->lines);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _free_message_write_stdout(struct alloc *alloc,
+                                      const struct message_write_stdout *msg)
+{
+	int err;
+
+	err = strfree(alloc, (char **)&msg->lines);
+	if (unlikely(err))
+		return err;	/* strfree() will report problem. */
+
+	return 0;
+}
+
+static int _pack_message_write_stderr(struct buffer *buffer,
+                                      const struct message_write_stderr *msg)
+{
+	int err;
+
+	err = buffer_pack_string(buffer, msg->lines);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _unpack_message_write_stderr(struct buffer *buffer,
+                                        struct alloc *alloc,
+                                        struct message_write_stderr *msg)
+{
+	int err;
+
+	err = buffer_unpack_string(buffer, alloc, (char **)&msg->lines);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _free_message_write_stderr(struct alloc *alloc,
+                                      const struct message_write_stderr *msg)
+{
+	int err;
+
+	err = strfree(alloc, (char **)&msg->lines);
+	if (unlikely(err))
+		return err;	/* strfree() will report problem. */
+
 	return 0;
 }
 
