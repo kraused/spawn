@@ -35,6 +35,8 @@ int task_ctor(struct task *self, struct alloc *alloc,
 		return -EINVAL;
 	}
 
+	self->plu->spawn = spawn;	/* FIXME */
+
 	err = thread_ctor(&self->thread);
 	if (unlikely(err)) {
 		fcallerror("thread_ctor", err);
