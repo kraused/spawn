@@ -1035,6 +1035,7 @@ static int _prepare_task_job(struct spawn *spawn)
 	err = ZALLOC(spawn->alloc, (void **)&argv, (argc + 1), sizeof(char *), "");
 
 	argv[0] = NULL;
+	j = 0;
 	if (likely(args)) {
 		err = xstrdup(spawn->alloc, args, &p);
 		if (unlikely(err)) {
