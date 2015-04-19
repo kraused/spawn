@@ -3,12 +3,12 @@ PREFIX   = /dev/shm/spawn
 
 CC       = gcc
 CPPFLAGS = -D'SPAWN_INSTALL_PREFIX="$(PREFIX)"' -I$(PWD)
-CFLAGS   = -O0 -ggdb -Wall -std=gnu11 -fPIC
+CFLAGS   = -O0 -ggdb -Wall -std=gnu11 -fPIC #-Wconversion
 # -Wl,--export-dynamic (or equivalently -rdynamic) is needed so that
 # plugins can resolve symbols from the executable.
 LDFLAGS  = -Wl,--export-dynamic -ldl -lpthread -lrt
 
-OBJ      = main.o loop.o plugin.o spawn.o job.o pack.o protocol.o error.o helper.o queue.o comm.o thread.o network.o alloc.o watchdog.o worker.o task.o options.o list.o hostinfo.o
+OBJ      = main.o loop.o plugin.o spawn.o job.o pack.o protocol.o error.o helper.o queue.o comm.o thread.o network.o alloc.o watchdog.o worker.o task.o options.o list.o hostinfo.o msgbuf.o
 SO       = plugins/local.so plugins/ssh.so plugins/slurm.so plugins/hello.so plugins/exec.so plugins/pmiexec.so
 
 default: spawn.exe $(SO)
