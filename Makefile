@@ -1,5 +1,5 @@
 
-PREFIX   = /dev/shm/spawn
+PREFIX  ?= /dev/shm/spawn
 
 CC       = gcc
 CPPFLAGS = -D'SPAWN_INSTALL_PREFIX="$(PREFIX)"' -I$(PWD)
