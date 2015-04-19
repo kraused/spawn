@@ -24,6 +24,7 @@
 #include "job.h"
 #include "watchdog.h"
 #include "plugin.h"
+#include "msgbuf.h"
 
 
 static int _work_available(struct spawn *spawn);
@@ -35,20 +36,20 @@ static int _handle_jobs(struct spawn *spawn);
 static int _handle_request_join(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static struct job_build_tree *_find_job_build_tree(struct spawn *spawn);
 static int _insert_process_in_struct_spawn(struct spawn *spawn,
-                                           struct job_build_tree *job,
-                                           struct message_header *header,
-                                           struct message_request_join *msg,
-                                           int port);
+	                                   struct job_build_tree *job,
+	                                   struct message_header *header,
+	                                   struct message_request_join *msg,
+	                                   int port);
 static int _alloc_process_list_in_struct_spawn(struct spawn *spawn,
-                                               struct job_build_tree *job);
+	                                       struct job_build_tree *job);
 static struct process *_find_spawned_process_by_id(struct spawn *spawn, int id);
 static int _send_response_join(struct spawn *spawn, int dest);
 static int _handle_ping(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_request_exec(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
-                                 struct message_header *header,
-                                 struct message_request_exec *msg,
-                                 struct exec_work_item **wkitem);
+	                         struct message_header *header,
+	                         struct message_request_exec *msg,
+	                         struct exec_work_item **wkitem);
 static int _handle_request_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_response_build_tree(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_request_task(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
@@ -69,6 +70,8 @@ static void _sighandler(int signum);
 static int _install_sighandler();
 static int _quit(struct spawn *spawn);
 static struct job *_find_one_and_only_job(struct spawn *spawn, int type);
+static int _flush_io_buffers(struct spawn *spawn);
+static int _flush_io_buffer(struct spawn *spawn, struct msgbuf *buf, int type);
 
 static int _finished = 0;
 static int _sigrecvd = 0;
@@ -79,7 +82,8 @@ int loop(struct spawn *spawn)
 	int err;
 	int newfd;
 	struct buffer *buffer;
-	struct timespec ts;
+	struct timespec timeout;
+	struct timespec abstime;
 
 	/* FIXME What kind of signal handling do we want to do
 	 *       for the remote processes?
@@ -113,6 +117,10 @@ int loop(struct spawn *spawn)
 		if (unlikely(err))
 			die();	/* FIXME */
 
+		err = _flush_io_buffers(spawn);
+		if (unlikely(err))
+			fcallerror("_flush_io_buffer", err);
+
 		_ping(spawn, 60);	/* FIXME timeout value */
 
 		err = cond_var_lock_acquire(&spawn->comm.cond);
@@ -126,12 +134,15 @@ int loop(struct spawn *spawn)
 		 *       tasks are finished and we rarely (or never?) have
 		 *       to handle jobs.
 		 */
+		timeout.tv_sec  = 0;
+		timeout.tv_nsec = 1000L*1000L;	/* Millisecond */
 
-		clock_gettime(CLOCK_REALTIME, &ts);
-		ts.tv_nsec += 1000000;	/* FIXME timeout value */
+		err = abstime_near_future(&timeout, &abstime);
+		if (unlikely(err))
+			fcallerror("abstime_near_future", err);
 
 		while (!_work_available(spawn)) {
-			err = cond_var_timedwait(&spawn->comm.cond, &ts);
+			err = cond_var_timedwait(&spawn->comm.cond, &abstime);
 			if (-ETIMEDOUT == err)
 				break;
 			if (unlikely(err)) {
@@ -314,7 +325,9 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 			 */
 	}
 
-	debug("Received a %d message from %d.", header.type, header.src);
+	if ((header.type != MESSAGE_TYPE_WRITE_STDOUT) &&
+	    (header.type != MESSAGE_TYPE_WRITE_STDERR))
+		debug("Received a %d message from %d.", header.type, header.src);
 
 	switch (header.type) {
 	case MESSAGE_TYPE_REQUEST_JOIN:
@@ -481,10 +494,10 @@ static struct job_build_tree *_find_job_build_tree(struct spawn *spawn)
 }
 
 static int _insert_process_in_struct_spawn(struct spawn *spawn,
-                                           struct job_build_tree *job,
-                                           struct message_header *header,
-                                           struct message_request_join *msg,
-                                           int port)
+	                                   struct job_build_tree *job,
+	                                   struct message_header *header,
+	                                   struct message_request_join *msg,
+	                                   int port)
 {
 	int err;
 	struct process *p;
@@ -513,7 +526,7 @@ static int _insert_process_in_struct_spawn(struct spawn *spawn,
 }
 
 static int _alloc_process_list_in_struct_spawn(struct spawn *spawn,
-                                               struct job_build_tree *job)
+	                                       struct job_build_tree *job)
 {
 	int err;
 	int i;
@@ -636,9 +649,9 @@ fail:
 }
 
 static int _alloc_exec_work_item(struct exec_worker_pool *wkpool,
-                                 struct message_header *header,
-                                 struct message_request_exec *msg,
-                                 struct exec_work_item **wkitem)
+	                         struct message_header *header,
+	                         struct message_request_exec *msg,
+	                         struct exec_work_item **wkitem)
 {
 	int err, tmp;
 
@@ -961,7 +974,7 @@ static int _handle_write_stdout(struct spawn *spawn, struct message_header *head
 		die();	/* FIXME ?*/
 	}
 
-	fprintf(stdout, msg.lines);
+	fprintf(stdout, "%s", msg.lines);
 
 	err = free_message_payload(header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {
@@ -983,7 +996,7 @@ static int _handle_write_stderr(struct spawn *spawn, struct message_header *head
 		die();	/* FIXME ?*/
 	}
 
-	fprintf(stderr, msg.lines);
+	fprintf(stderr, "%s", msg.lines);
 
 	err = free_message_payload(header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {
@@ -1213,5 +1226,77 @@ static struct job *_find_one_and_only_job(struct spawn *spawn, int type)
 	}
 
 	return ret;
+}
+
+static int _flush_io_buffers(struct spawn *spawn)
+{
+	int err;
+
+	if (spawn->bout) {
+		err = _flush_io_buffer(spawn, spawn->bout, MESSAGE_TYPE_WRITE_STDOUT);
+		if (unlikely(err))
+			return err;
+	}
+
+	if (spawn->berr) {
+		err = _flush_io_buffer(spawn, spawn->berr, MESSAGE_TYPE_WRITE_STDERR);
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
+static int _flush_io_buffer(struct spawn *spawn, struct msgbuf *buf, int type)
+{
+	int err;
+	struct message_header       header;
+	struct message_write_stderr msg;
+
+	err = msgbuf_lock(buf);
+	if (unlikely(err)) {
+		fcallerror("msgbuf_lock", err);
+		return err;
+	}
+
+	/* FIXME This section uses knowledge of the internal structure of struct msgbuf.
+	 */
+	{
+		struct list *p;
+		struct list *q;
+
+		LIST_FOREACH_S(p, q, &buf->lines) {
+			struct msgbuf_line *line = LIST_ENTRY(p, struct msgbuf_line, list);
+
+			memset(&header, 0, sizeof(header));
+			memset(&msg   , 0, sizeof(msg));
+
+			header.src   = spawn->tree.here;        /* Always the same */
+			header.flags = MESSAGE_FLAG_UCAST;
+			header.type  = type;
+
+			msg.lines = line->string;
+
+			err = spawn_send_message(spawn, &header, (void *)&msg);
+			if (unlikely(err)) {
+				fcallerror("spawn_send_message", err);
+				return err;
+			}
+
+			list_remove(p);
+
+			err = ZFREE(buf->alloc, (void **)&line, sizeof(struct msgbuf_line), 1, "");
+			if (unlikely(err))
+				fcallerror("ZFREE", err);
+		}
+	}
+
+	err = msgbuf_unlock(buf);
+	if (unlikely(err)) {
+		fcallerror("msgbuf_unlock", err);
+		return err;
+	}
+
+	return 0;
 }
 

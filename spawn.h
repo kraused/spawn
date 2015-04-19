@@ -76,6 +76,11 @@ struct spawn
 
 	struct exec_plugin	*exec;
 	struct exec_worker_pool	*wkpool;
+
+	/* Buffered stdout and stderr content on remote processes.
+	 */
+	struct msgbuf		*bout;
+	struct msgbuf		*berr;
 };
 
 /*

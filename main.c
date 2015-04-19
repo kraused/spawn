@@ -24,6 +24,7 @@
 #include "loop.h"
 #include "job.h"
 #include "protocol.h"
+#include "msgbuf.h"
 
 
 /*
@@ -198,6 +199,8 @@ static int _main_on_other(int argc, char **argv)
 	struct _args_other args;
 	struct optpool *opts;
 	int fd, timeout;
+	struct msgbuf bout;
+	struct msgbuf berr;
 
 	/*
 	 * Done before daemonize() such that the exec plugin can return
@@ -224,6 +227,18 @@ static int _main_on_other(int argc, char **argv)
 
 	alloc = libc_allocator_with_debugging();
 
+#define MAIN_MSGBUF_SIZE	(1 << 18)
+
+	/* FIXME What to do with these errors? stdout and stderr are already
+	 *       closed so we cannot tell anyone.
+	 */
+	err = msgbuf_ctor(&bout, alloc, MAIN_MSGBUF_SIZE);
+	err = msgbuf_ctor(&berr, alloc, MAIN_MSGBUF_SIZE);
+
+	register_io_buffers(&bout, &berr); /* Ignore any error. If something
+	                                    * goes wrong here we cannot tell
+	                                    * anyway. */
+
 	err = _join(alloc, &args, &fd, &opts);
 	if (unlikely(err)) {
 		error("Failed to join the network.");
@@ -247,6 +262,9 @@ static int _main_on_other(int argc, char **argv)
 		error("struct spawn constructor failed with exit code %d.", err);
 		return err;
 	}
+
+	spawn.bout = &bout;
+	spawn.berr = &berr;
 
 	err = network_add_ports(&spawn.tree, &fd, 1);
 	if (unlikely(err)) {
@@ -339,21 +357,10 @@ static int _parse_argv_on_other(int argc, char **argv, struct _args_other *args)
 
 static int _redirect_stdio()
 {
-	int i, fd;
-	char buf[64];
-
-	snprintf(buf, sizeof(buf), "/tmp/spawn-%04d.log", (int )getpid());
+	int i;
 
 	for (i = 1; i < 1024; ++i)
 		close(i);
-
-	fd = open(buf, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-	if (unlikely(1 != fd))
-		die();	/* No way to write an error message at this point.
-			 */
-
-	/* FIXME Handle dup() error */
-	dup(1);
 
 	return 0;
 }

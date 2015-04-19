@@ -10,8 +10,17 @@
 
 #include <assert.h>
 
+struct msgbuf;
+
 /*
- * Error handling marcos. We do not provide a fatal() macro to force hackers to perform
+ * By default error() and friends write to stdout or stderr. As an alternative, it is
+ * possible to register a message buffer to which all output is routed. This is useful
+ * for remotely spawned processes that have no stdout/stderr available.
+ */
+int register_io_buffers(struct msgbuf *bout, struct msgbuf *berr);
+
+/*
+ * Error handling macros. We do not provide a fatal() macro to force hackers to perform
  * a orderly retreat when hitting an error.
  */
 #define error(FMT, ...)	spawn_error(__FILE__, __func__, __LINE__, FMT, ## __VA_ARGS__)
@@ -29,7 +38,6 @@ void spawn_debug(const char* file, const char* func, long line, const char* fmt,
  * short and streamlined fashion.
  */
 #define fcallerror(F, retval)	error(F "() failed with error %d.", retval)
-
 
 /*
  * Terminate the application.
