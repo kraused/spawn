@@ -8,10 +8,10 @@ CFLAGS   = -O0 -ggdb -Wall -std=gnu11 -fPIC #-Wconversion
 # plugins can resolve symbols from the executable.
 LDFLAGS  = -Wl,--export-dynamic -ldl -lpthread -lrt
 
-OBJ      = main.o loop.o plugin.o spawn.o job.o pack.o protocol.o error.o helper.o queue.o comm.o thread.o network.o alloc.o watchdog.o worker.o task.o options.o list.o hostinfo.o msgbuf.o
+OBJ      = main.o loop.o plugin.o spawn.o job.o pack.o protocol.o error.o helper.o queue.o comm.o thread.o network.o alloc.o watchdog.o worker.o task.o options.o list.o hostinfo.o msgbuf.o pmi/client.o pmi/server.o
 SO       = plugins/local.so plugins/ssh.so plugins/slurm.so plugins/hello.so plugins/exec.so plugins/pmiexec.so
 
-default: spawn.exe $(SO)
+default: spawn.exe $(SO) pmi/libpmiclient.a
 all    : default install
 
 %.o: %.c %.h
@@ -22,6 +22,9 @@ all    : default install
 
 spawn.exe: $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^
+
+pmi/libpmiclient.a: pmi/client.o
+	ar cq $@ $^
 
 install:
 	rm -rf $(PREFIX)
@@ -39,11 +42,15 @@ install:
 	#
 	sed -e 's+SPAWN_INSTALL_PREFIX+$(PREFIX)+g' config.default > $(PREFIX)/etc/config.default 
 	chmod 444 $(PREFIX)/etc/config.default
+	#
+	install -m 755 pmi/libpmiclient.a $(PREFIX)/lib
 
 clean:
 	rm -f spawn.exe
 	rm -f *.o
 	rm -f plugins/*.o
 	rm -f plugins/*.so
+	rm -f pmi/*.o
+	rm -f pmi/*.a
 	rm -rf $(PREFIX)
 
