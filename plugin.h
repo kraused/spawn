@@ -94,20 +94,13 @@ struct task_plugin
 {
 	struct plugin			base;
 
-	struct task_plugin_avail_ops	*api;
-	void				*apix;	/* Auxiliary variable used to store
-						 * everything the api functions require
-						 * to function. */
-
-	/* FIXME
-	 */
 	struct spawn			*spawn;
 
 	struct task_plugin_ops		*ops;
 };
 
 /*
- * Operations provided by a "task" plugin
+ * Operations provided by a "task" plugin.
  */
 struct task_plugin_ops
 {
@@ -123,19 +116,6 @@ struct task_plugin_ops
 	 */
 	int	(*other)(struct task_plugin *self,
                          int argc, char **argv);
-};
-
-/*
- * Operations available to a "task" plugin
- */
-struct task_plugin_avail_ops
-{
-	/* Write a string to the standard output at the root of the tree.
-	 */
-	int	(*send_write_stdout)(struct task_plugin *plu, const char *str);
-	/* Write a string to the standard error at the root of the tree.
-	 */
-	int	(*send_write_stderr)(struct task_plugin *plu, const char *str);
 };
 
 /*

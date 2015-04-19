@@ -68,5 +68,11 @@ static inline int task_exit_code(struct task *self)
 	return self->thread.err;
 }
 
+/*
+ * Write a line to stdout or stderr from a task plugin.
+ */
+int task_plugin_api_write_line_stdout(struct task_plugin *plu, const char *line);
+int task_plugin_api_write_line_stderr(struct task_plugin *plu, const char *line);
+
 #endif
 

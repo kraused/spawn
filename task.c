@@ -9,9 +9,11 @@
 #include "helper.h"
 #include "plugin.h"
 #include "spawn.h"
+#include "protocol.h"
 
 
 static int _thread_main(void *arg);
+static int _send_write_message(struct spawn *spawn, int type, const char *line);
 
 
 int task_ctor(struct task *self, struct alloc *alloc,
@@ -35,7 +37,9 @@ int task_ctor(struct task *self, struct alloc *alloc,
 		return -EINVAL;
 	}
 
-	self->plu->spawn = spawn;	/* FIXME */
+	/* Required for the task_plugin_api_X functions.
+	 */
+	self->plu->spawn = spawn;
 
 	err = thread_ctor(&self->thread);
 	if (unlikely(err)) {
@@ -99,6 +103,17 @@ int task_cancel(struct task *self)
 	return 0;
 }
 
+int task_plugin_api_write_line_stdout(struct task_plugin *plu, const char *line)
+{
+	return _send_write_message(plu->spawn, MESSAGE_TYPE_WRITE_STDOUT, line);
+}
+
+int task_plugin_api_write_line_stderr(struct task_plugin *plu, const char *line)
+{
+	return _send_write_message(plu->spawn, MESSAGE_TYPE_WRITE_STDERR, line);
+}
+
+
 static int _thread_main(void *arg)
 {
 	struct task *self = (struct task *)arg;
@@ -111,5 +126,33 @@ static int _thread_main(void *arg)
 	}
 
 	return err;
+}
+
+static int _send_write_message(struct spawn *spawn, int type, const char *line)
+{
+	int err;
+	struct message_header       header;
+	struct message_write_stderr msg;
+
+	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
+
+	header.src   = spawn->tree.here;	/* Always the same */
+	header.flags = MESSAGE_FLAG_UCAST;
+	header.type  = type;
+
+	/* We can ignore the channel at this point since this is a standard
+	 * message type supported by the loop() function.
+	 */
+
+	msg.lines = line;
+
+	err = spawn_send_message(spawn, &header, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("spawn_send_message", err);
+		return err;
+	}
+
+	return 0;
 }
 
