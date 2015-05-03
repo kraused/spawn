@@ -31,7 +31,8 @@ enum
 	MESSAGE_TYPE_REQUEST_EXIT,
 	MESSAGE_TYPE_RESPONSE_EXIT,
 	MESSAGE_TYPE_WRITE_STDOUT,
-	MESSAGE_TYPE_WRITE_STDERR
+	MESSAGE_TYPE_WRITE_STDERR,
+	MESSAGE_TYPE_USER
 };
 
 /*
@@ -141,6 +142,15 @@ struct message_write_stdout
 struct message_write_stderr
 {
 	const char	*lines;
+};
+
+/*
+ * Opaque message that is sent and received by plugins.
+ */
+struct message_user
+{
+	ui64		len;
+	ui8		*bytes;
 };
 
 /*

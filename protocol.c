@@ -96,6 +96,13 @@ static int _unpack_message_write_stderr(struct buffer *buffer,
                                         struct message_write_stderr *msg);
 static int _free_message_write_stderr(struct alloc *alloc,
                                       const struct message_write_stderr *msg);
+static int _pack_message_user(struct buffer *buffer,
+                              const struct message_user *msg);
+static int _unpack_message_user(struct buffer *buffer,
+                                struct alloc *alloc,
+                                struct message_user *msg);
+static int _free_message_user(struct alloc *alloc,
+                              const struct message_user *msg);
 
 
 int pack_message_header(struct buffer *buffer,
@@ -295,6 +302,10 @@ static int _pack_message_something(struct buffer *buffer, int type, void *msg)
 		err = _pack_message_write_stderr(buffer,
 		                    (const struct message_write_stderr *)msg);
 		break;
+	case MESSAGE_TYPE_USER:
+		err = _pack_message_user(buffer,
+		                    (const struct message_user *)msg);
+		break;
 	default:
 		error("Unknown message type %d.", type);
 		err = -ESOMEFAULT;
@@ -360,6 +371,10 @@ static int _alloc_message_something(struct alloc *alloc, int type, void **msg)
 	case MESSAGE_TYPE_WRITE_STDERR:
 		err = ZALLOC(alloc, msg, 1, sizeof(struct message_write_stderr),
 		             "struct message_write_stderr");
+		break;
+	case MESSAGE_TYPE_USER:
+		err = ZALLOC(alloc, msg, 1, sizeof(struct message_user),
+		             "struct message_user");
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -430,6 +445,10 @@ static int _unpack_message_something(struct buffer *buffer, struct alloc *alloc,
 		err = _unpack_message_write_stderr(buffer, alloc,
 		                    (struct message_write_stderr *)msg);
 		break;
+	case MESSAGE_TYPE_USER:
+		err = _unpack_message_user(buffer, alloc,
+		                    (struct message_user *)msg);
+		break;
 	default:
 		error("Unknown message type %d.", type);
 		err = -ESOMEFAULT;
@@ -495,6 +514,10 @@ static int _free_message_something(struct alloc *alloc, int type, void *msg)
 	case MESSAGE_TYPE_WRITE_STDERR:
 		err = _free_message_write_stderr(alloc,
 		                    (struct message_write_stderr *)msg);
+		break;
+	case MESSAGE_TYPE_USER:
+		err = _free_message_user(alloc,
+		                    (struct message_user *)msg);
 		break;
 	default:
 		error("Unknown message type %d.", type);
@@ -1006,6 +1029,59 @@ static int _free_message_write_stderr(struct alloc *alloc,
 	err = strfree(alloc, (char **)&msg->lines);
 	if (unlikely(err))
 		return err;	/* strfree() will report problem. */
+
+	return 0;
+}
+
+static int _pack_message_user(struct buffer *buffer,
+                              const struct message_user *msg)
+{
+	int err;
+
+	err = buffer_pack_ui64(buffer, &msg->len, 1);
+	if (unlikely(err))
+		return err;
+
+	err = buffer_pack_ui8(buffer, msg->bytes, msg->len);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _unpack_message_user(struct buffer *buffer,
+                                struct alloc *alloc,
+                                struct message_user *msg)
+{
+	int err;
+
+	err = buffer_unpack_ui64(buffer, &msg->len, 1);
+	if (unlikely(err))
+		return err;
+
+	err = ZALLOC(alloc, (void **)&msg->bytes, msg->len, sizeof(ui8), "bytes");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		return err;
+	}
+
+	err = buffer_unpack_ui8(buffer, msg->bytes, msg->len);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int _free_message_user(struct alloc *alloc,
+                              const struct message_user *msg)
+{
+	int err;
+
+	err = ZFREE(alloc, (void **)&msg->bytes, msg->len, sizeof(ui8), "bytes");
+	if (unlikely(err)) {
+		fcallerror("ZFREE", err);
+		return err;
+	}
 
 	return 0;
 }
