@@ -23,7 +23,7 @@ static int _local(struct task_plugin *self,
 static int _other(struct task_plugin *self,
                   int argc, char **argv);
 static int _watch_child(struct task_plugin *self, long long *child, int *status,
-                        int fdo, int fde);
+                        int fdo, int fde, int fdpmi);
 static int _read_from_child(int fd, char *line, int *len, ll *size,
                             struct task_plugin *plu,
                             int (*flush)(struct task_plugin *, const char *));
@@ -126,7 +126,7 @@ static int _other(struct task_plugin *self,
 
 	log("Child process %d is alive.", (int )child);
 
-	err = _watch_child(self, &child, &status, fdo[0], fde[0]);
+	err = _watch_child(self, &child, &status, fdo[0], fde[0], fdpmi[0]);
 	if (unlikely(err)) {
 		fcallerror("_watch_child", err);
 		return err;
@@ -150,10 +150,10 @@ static int _other(struct task_plugin *self,
 #define MAX_LINE_LEN	512
 
 static int _watch_child(struct task_plugin *self, long long *child, int *status,
-                        int fdo, int fde)
+                        int fdo, int fde, int fdpmi)
 {
 	int err;
-	struct pollfd pollfds[2];
+	struct pollfd pollfds[3];
 	char lo[MAX_LINE_LEN];
 	int leno;
 	char le[MAX_LINE_LEN];
@@ -170,13 +170,15 @@ static int _watch_child(struct task_plugin *self, long long *child, int *status,
 
 		pollfds[0].fd = fdo;
 		pollfds[1].fd = fde;
+		pollfds[2].fd = fdpmi;
 		pollfds[0].events = POLLIN | POLLPRI | POLLERR;
 		pollfds[1].events = POLLIN | POLLPRI | POLLERR;
+		pollfds[2].events = POLLIN | POLLPRI | POLLERR;
 
 		/* TODO Optimize the timeout.
 		 */
 
-		err = do_poll(pollfds, 2, 1, &n);
+		err = do_poll(pollfds, 3, 1, &n);
 		if (unlikely(err))
 			return err;
 
@@ -199,6 +201,9 @@ static int _watch_child(struct task_plugin *self, long long *child, int *status,
 
 			if (0 != size)
 				++k;
+		}
+		if (pollfds[2].revents & POLLIN) {
+
 		}
 
 		quit = (0 == *child) && (0 == k);
