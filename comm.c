@@ -14,16 +14,6 @@
 
 
 static int _comm_thread(void *);
-static int _comm_queue_ctor(struct comm_queue *self,
-                            struct alloc * alloc, ll size);
-static int _comm_queue_dtor(struct comm_queue *self);
-static int _comm_queue_enqueue(struct comm_queue *self,
-                               struct buffer *buffer);
-static int _comm_queue_dequeue(struct comm_queue *self,
-                               struct buffer **buffer);
-static int _comm_queue_peek(struct comm_queue *self,
-                            struct buffer **buffer);
-static int _comm_queue_size(struct comm_queue *self, ll *size);
 static int _comm_handle_net_changes(struct comm *self);
 static int _comm_zalloc_arrays(struct alloc *alloc,
                                int nrwfds, int npollfds,
@@ -63,13 +53,13 @@ int comm_ctor(struct comm *self, struct alloc *alloc,
 {
 	int err;
 
-	err = _comm_queue_ctor(&self->sendq, alloc, sendqsz);
+	err = queue_with_lock_ctor(&self->sendq, alloc, sendqsz);
 	if (unlikely(err))
-		return err;	/* _comm_queue_ctor() reported reason. */
+		return err;	/* queue_with_lock_ctor() reported reason. */
 
-	err = _comm_queue_ctor(&self->recvq, alloc, recvqsz);
+	err = queue_with_lock_ctor(&self->recvq, alloc, recvqsz);
 	if (unlikely(err))
-		goto fail1;	/* _comm_queue_ctor() reported reason. */
+		goto fail1;	/* queue_with_lock_ctor() reported reason. */
 
 	self->stop    = 0;
 	self->alloc   = alloc;
@@ -101,10 +91,10 @@ int comm_ctor(struct comm *self, struct alloc *alloc,
 	return 0;
 
 fail2:
-	_comm_queue_dtor(&self->recvq);	/* _comm_queue_dtor() reports reason. */
+	queue_with_lock_dtor(&self->recvq);	/* queue_with_lock_dtor() reports reason. */
 
 fail1:
-	_comm_queue_dtor(&self->sendq);	/* _comm_queue_dtor() reports reason. */
+	queue_with_lock_dtor(&self->sendq);	/* queue_with_lock_dtor() reports reason. */
 
 	return err;
 }
@@ -124,13 +114,13 @@ int comm_dtor(struct comm *self)
 		return err;
 	}
 
-	err = _comm_queue_dtor(&self->sendq);
+	err = queue_with_lock_dtor(&self->sendq);
 	if (unlikely(err))
-		return err;	/* _comm_queue_dtor() reports reason. */
+		return err;	/* queue_with_lock_dtor() reports reason. */
 
-	err = _comm_queue_dtor(&self->recvq);
+	err = queue_with_lock_dtor(&self->recvq);
 	if (unlikely(err))
-		return err;	/* _comm_queue_dtor() reports reason. */
+		return err;	/* queue_with_lock_dtor() reports reason. */
 
 	err = _comm_zfree_arrays(self->alloc, self->nrwfds, self->npollfds,
 	                         &self->pollfds, &self->recvb, &self->sendb);
@@ -191,12 +181,12 @@ int comm_halt_processing(struct comm *self)
 
 int comm_enqueue(struct comm *self, struct buffer *buffer)
 {
-	return _comm_queue_enqueue(&self->sendq, buffer);
+	return queue_with_lock_enqueue(&self->sendq, (void *)buffer);
 }
 
 int comm_dequeue(struct comm *self, struct buffer **buffer)
 {
-	return _comm_queue_dequeue(&self->recvq, buffer);
+	return queue_with_lock_dequeue(&self->recvq, (void **)buffer);
 }
 
 int comm_dequeue_would_succeed(struct comm *self, int *result)
@@ -204,7 +194,7 @@ int comm_dequeue_would_succeed(struct comm *self, int *result)
 	ll size;
 	int err;
 
-	err = _comm_queue_size(&self->recvq, &size);
+	err = queue_with_lock_size(&self->recvq, &size);
 	*result = (size > 0);
 
 	return err;
@@ -217,9 +207,9 @@ int comm_flush(struct comm *self)
 	struct timespec ts;
 
 	while (1) {
-		err = _comm_queue_size(&self->sendq, &size);
+		err = queue_with_lock_size(&self->sendq, &size);
 		if (unlikely(err)) {
-			fcallerror("_comm_queue_size", err);
+			fcallerror("queue_with_lock_size", err);
 			continue;
 		}
 		if (0 == size)
@@ -324,195 +314,6 @@ unlock:
 			 */
 			die();
 		}
-	}
-
-	return 0;
-}
-
-static int _comm_queue_ctor(struct comm_queue *self,
-                            struct alloc *alloc, ll size)
-{
-	int err, tmp;
-
-	err = lock_ctor(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to create lock (error %d).", err);
-		return err;
-	}
-
-	err = queue_ctor(&self->queue, alloc, size);
-	if (unlikely(err)) {
-		error("struct queue constructor failed with error %d.", err);
-		goto fail;
-	}
-
-	return 0;
-
-fail:
-	assert(err);
-
-	tmp = lock_dtor(&self->lock);
-	if (unlikely(tmp))
-		error("Failed to destruct lock (error %d).", tmp);
-
-	return err;
-}
-
-static int _comm_queue_dtor(struct comm_queue *self)
-{
-	int err, tmp;
-
-	err = lock_acquire(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to acquire lock (error %d).", err);
-		return err;
-	}
-
-	err = queue_dtor(&self->queue);
-	if (unlikely(err)) {
-		error("struct queue destructor failed with error %d.", err);
-		goto fail;
-	}
-
-	err = lock_release(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to release lock (error %d).", err);
-		return err;
-	}
-
-	err = lock_dtor(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to destruct lock (error %d).", err);
-		return err;
-	}
-
-	return 0;
-
-fail:
-	assert(err);
-
-	tmp = lock_release(&self->lock);
-	if (unlikely(tmp))
-		error("Failed to release lock (error %d).", tmp);
-
-	return err;
-}
-
-static int _comm_queue_enqueue(struct comm_queue *self,
-                               struct buffer *buffer)
-{
-	int err, tmp;
-
-	err = lock_acquire(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to acquire lock (error %d).", err);
-		return err;
-	}
-
-	err = queue_enqueue(&self->queue, (void *)buffer);
-	if (unlikely(err))
-		goto fail;
-
-	err = lock_release(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to release lock (error %d).", err);
-		return err;
-	}
-
-	return 0;
-
-fail:
-	assert(err);
-
-	tmp = lock_release(&self->lock);
-	if (unlikely(tmp))
-		error("Failed to release lock (error %d).", tmp);
-
-	return err;
-}
-
-static int _comm_queue_dequeue(struct comm_queue *self,
-                               struct buffer **buffer)
-{
-	int err, tmp;
-
-	err = lock_acquire(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to acquire lock (error %d).", err);
-		return err;
-	}
-
-	err = queue_dequeue(&self->queue, (void **)buffer);
-	if (unlikely(err))
-		goto fail;
-
-	err = lock_release(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to release lock (error %d).", err);
-		return err;
-	}
-
-	return 0;
-
-fail:
-	assert(err);
-
-	tmp = lock_release(&self->lock);
-	if (unlikely(tmp))
-		error("Failed to release lock (error %d).", tmp);
-
-	return err;
-}
-
-static int _comm_queue_peek(struct comm_queue *self,
-                            struct buffer **buffer)
-{
-	int err, tmp;
-
-	err = lock_acquire(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to acquire lock (error %d).", err);
-		return err;
-	}
-
-	err = queue_peek(&self->queue, (void **)buffer);
-	if (unlikely(err))
-		goto fail;
-
-	err = lock_release(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to release lock (error %d).", err);
-		return err;
-	}
-
-	return 0;
-
-fail:
-	assert(err);
-
-	tmp = lock_release(&self->lock);
-	if (unlikely(tmp))
-		error("Failed to release lock (error %d).", tmp);
-
-	return err;
-}
-
-static int _comm_queue_size(struct comm_queue *self, ll *size)
-{
-	int err;
-
-	err = lock_acquire(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to acquire lock (error %d).", err);
-		return err;
-	}
-
-	queue_size(&self->queue, size);	/* No real error code. */
-
-	err = lock_release(&self->lock);
-	if (unlikely(err)) {
-		error("Failed to release lock (error %d).", err);
-		return err;
 	}
 
 	return 0;
@@ -746,7 +547,7 @@ static int _comm_fill_sendb(struct comm *self)
 			break;
 		}
 
-		err = _comm_queue_peek(&self->sendq, &buffer);
+		err = queue_with_lock_peek(&self->sendq, (void **)&buffer);
 		if (-ENOENT == err)
 			break;
 		if (unlikely(err))
@@ -762,7 +563,7 @@ static int _comm_fill_sendb(struct comm *self)
 				die();
 			}
 
-			err = _comm_queue_dequeue(&self->sendq, &buffer);
+			err = queue_with_lock_dequeue(&self->sendq, (void **)&buffer);
 			if (unlikely(err))
 				return err;
 
@@ -790,7 +591,7 @@ static int _comm_fill_sendb(struct comm *self)
 		/* Route local message directly to the receive queue.
 		 */
 		if (self->net->here == header.dst) {
-			err = _comm_queue_dequeue(&self->sendq, &buffer);
+			err = queue_with_lock_dequeue(&self->sendq, (void **)&buffer);
 			if (unlikely(err))
 				return err;
 
@@ -802,9 +603,9 @@ static int _comm_fill_sendb(struct comm *self)
 					 */
 			}
 
-			err = _comm_queue_enqueue(&self->recvq, buffer);
+			err = queue_with_lock_enqueue(&self->recvq, buffer);
 			if (unlikely(err))
-				fcallerror("_comm_queue_enqueue", err);
+				fcallerror("queue_with_lock_enqueue", err);
 				/* Will cause a memory leak that we just
 				 * have to live with. */
 
@@ -822,7 +623,7 @@ static int _comm_fill_sendb(struct comm *self)
 				error("Dropping message with destination %d "
 				      "due to missing LFT entry.", header.dst);
 
-			err = _comm_queue_dequeue(&self->sendq, &buffer);
+			err = queue_with_lock_dequeue(&self->sendq, (void **)&buffer);
 			if (unlikely(err)) {
 				fcallerror("queue_dequeue", err);
 				return err;
@@ -834,7 +635,7 @@ static int _comm_fill_sendb(struct comm *self)
 		if (self->sendb[self->net->lft[header.dst]])
 			break;
 
-		err = _comm_queue_dequeue(&self->sendq, (void *)&buffer);
+		err = queue_with_lock_dequeue(&self->sendq, (void *)&buffer);
 		if (unlikely(err))
 			return err;
 
@@ -979,9 +780,9 @@ static int _comm_reads(struct comm *self)
 			 */
 			if ((MESSAGE_FLAG_UCAST & header.flags) &&
 			    (self->net->here != header.dst)) {
-				err = _comm_queue_enqueue(&self->sendq, self->recvb[i]);
+				err = queue_with_lock_enqueue(&self->sendq, self->recvb[i]);
 				if (unlikely(err))
-					fcallerror("_comm_queue_enqueue", err);
+					fcallerror("queue_with_lock_enqueue", err);
 					/* Lost message. */
 
 				self->recvb[i] = NULL;
@@ -1017,9 +818,9 @@ static int _comm_reads(struct comm *self)
 				die();
 			}
 
-			err = _comm_queue_enqueue(&self->recvq, self->recvb[i]);
+			err = queue_with_lock_enqueue(&self->recvq, self->recvb[i]);
 			if (unlikely(err))
-				fcallerror("_comm_queue_enqueue", err);
+				fcallerror("queue_with_lock_enqueue", err);
 
 			err = cond_var_broadcast(&self->cond);
 			if (unlikely(err))

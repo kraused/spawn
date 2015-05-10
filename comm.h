@@ -22,16 +22,6 @@ struct message_header;
  */
 
 /*
- * Lock-based queue for buffers. The queues are the main interface for
- * interaction with the communication thread.
- */
-struct comm_queue
-{
-	struct queue		queue;
-	struct lock		lock;
-};
-
-/*
  * Communication module.
  */
 struct comm
@@ -48,8 +38,8 @@ struct comm
 	struct buffer_pool	*bufpool;
 
 	/* Queues for send requests and incoming messages. */
-	struct comm_queue	sendq;
-	struct comm_queue	recvq;
+	struct queue_with_lock	sendq;
+	struct queue_with_lock	recvq;
 
 	/* Condition variable that threads can block on to be notified
 	 * about the availability of new buffers.
