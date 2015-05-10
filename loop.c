@@ -407,6 +407,11 @@ static int _handle_jobs(struct spawn *spawn)
 
 		completed = 0;
 
+		/* FIXME If job->work() fails we just try again and usually it
+		 *       will fail again so we are just hanging in an infinite
+		 *       loop.
+		 */
+
 		err = job->work(job, spawn, &completed);
 		if (unlikely(err))
 			fcallerror("job->work", err);
@@ -975,6 +980,7 @@ static int _handle_write_stdout(struct spawn *spawn, struct message_header *head
 	}
 
 	fprintf(stdout, "%s", msg.lines);
+	fflush (stdout);
 
 	err = free_message_payload(header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {
@@ -997,6 +1003,7 @@ static int _handle_write_stderr(struct spawn *spawn, struct message_header *head
 	}
 
 	fprintf(stderr, "%s", msg.lines);
+	fflush (stderr);
 
 	err = free_message_payload(header, spawn->alloc, (void *)&msg);
 	if (unlikely(err)) {
