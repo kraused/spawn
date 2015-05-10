@@ -98,9 +98,9 @@ static void _bite()
 	ts.tv_nsec = 1000000;
 
 	while (1) {
-		kill(0, SIGTERM);
+		killpg(0, SIGTERM);
 		nanosleep(&ts, NULL);
-		kill(0, SIGKILL);
+		killpg(0, SIGKILL);
 	}
 }
 
