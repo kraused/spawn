@@ -109,7 +109,16 @@ static int _other(struct task_plugin *self,
 
 	log("Child process %d is alive.", (int )child);
 
+	/* FIXME Error handling.
+	 */
+	close(fdo[1]);
+	close(fde[1]);
+
 	err = _watch_child(self, &child, &status, fdo[0], fde[0]);
+
+	close(fdo[0]);
+	close(fde[0]);
+
 	if (unlikely(err)) {
 		fcallerror("_watch_child", err);
 		return err;
