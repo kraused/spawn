@@ -123,3 +123,189 @@ int queue_peek(struct queue *self, void **p)
 	return 0;
 }
 
+int queue_with_lock_ctor(struct queue_with_lock *self,
+                         struct alloc *alloc, ll size)
+{
+	int err, tmp;
+
+	err = lock_ctor(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to create lock (error %d).", err);
+		return err;
+	}
+
+	err = queue_ctor(&self->queue, alloc, size);
+	if (unlikely(err)) {
+		error("struct queue constructor failed with error %d.", err);
+		goto fail;
+	}
+
+	return 0;
+
+fail:
+	assert(err);
+
+	tmp = lock_dtor(&self->lock);
+	if (unlikely(tmp))
+		error("Failed to destruct lock (error %d).", tmp);
+
+	return err;
+}
+
+int queue_with_lock_dtor(struct queue_with_lock *self)
+{
+	int err, tmp;
+
+	err = lock_acquire(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to acquire lock (error %d).", err);
+		return err;
+	}
+
+	err = queue_dtor(&self->queue);
+	if (unlikely(err)) {
+		error("struct queue destructor failed with error %d.", err);
+		goto fail;
+	}
+
+	err = lock_release(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to release lock (error %d).", err);
+		return err;
+	}
+
+	err = lock_dtor(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to destruct lock (error %d).", err);
+		return err;
+	}
+
+	return 0;
+
+fail:
+	assert(err);
+
+	tmp = lock_release(&self->lock);
+	if (unlikely(tmp))
+		error("Failed to release lock (error %d).", tmp);
+
+	return err;
+}
+
+int queue_with_lock_size(struct queue_with_lock *self, ll *size)
+{
+	int err;
+
+	err = lock_acquire(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to acquire lock (error %d).", err);
+		return err;
+	}
+
+	queue_size(&self->queue, size);	/* No real error code. */
+
+	err = lock_release(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to release lock (error %d).", err);
+		return err;
+	}
+
+	return 0;
+}
+
+int queue_with_lock_enqueue(struct queue_with_lock *self, void *p)
+{
+	int err, tmp;
+
+	err = lock_acquire(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to acquire lock (error %d).", err);
+		return err;
+	}
+
+	err = queue_enqueue(&self->queue, p);
+	if (unlikely(err))
+		goto fail;
+
+	err = lock_release(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to release lock (error %d).", err);
+		return err;
+	}
+
+	return 0;
+
+fail:
+	assert(err);
+
+	tmp = lock_release(&self->lock);
+	if (unlikely(tmp))
+		error("Failed to release lock (error %d).", tmp);
+
+	return err;
+}
+
+int queue_with_lock_dequeue(struct queue_with_lock *self, void **p)
+{
+	int err, tmp;
+
+	err = lock_acquire(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to acquire lock (error %d).", err);
+		return err;
+	}
+
+	err = queue_dequeue(&self->queue, p);
+	if (unlikely(err))
+		goto fail;
+
+	err = lock_release(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to release lock (error %d).", err);
+		return err;
+	}
+
+	return 0;
+
+fail:
+	assert(err);
+
+	tmp = lock_release(&self->lock);
+	if (unlikely(tmp))
+		error("Failed to release lock (error %d).", tmp);
+
+	return err;
+}
+
+int queue_with_lock_peek(struct queue_with_lock *self, void **p)
+{
+	int err, tmp;
+
+	err = lock_acquire(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to acquire lock (error %d).", err);
+		return err;
+	}
+
+	err = queue_peek(&self->queue, p);
+	if (unlikely(err))
+		goto fail;
+
+	err = lock_release(&self->lock);
+	if (unlikely(err)) {
+		error("Failed to release lock (error %d).", err);
+		return err;
+	}
+
+	return 0;
+
+fail:
+	assert(err);
+
+	tmp = lock_release(&self->lock);
+	if (unlikely(tmp))
+		error("Failed to release lock (error %d).", tmp);
+
+	return err;
+}
+

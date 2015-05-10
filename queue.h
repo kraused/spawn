@@ -3,6 +3,7 @@
 #define SPAWN_QUEUE_H_INCLUDED 1
 
 #include "ints.h"
+#include "thread.h"
 
 
 /*
@@ -64,6 +65,27 @@ int queue_dequeue(struct queue *self, void **p);
  * queue_dequeue() but does not modify the queue.
  */
 int queue_peek(struct queue *self, void **p);
+
+
+/*
+ * A thread-safe variant of struct queue that ensures consistency by means
+ * of mutual exclusion.
+ */
+struct queue_with_lock
+{
+	struct queue	queue;
+	struct lock	lock;
+};
+
+int queue_with_lock_ctor(struct queue_with_lock *self, struct alloc *alloc, ll capacity);
+int queue_with_lock_dtor(struct queue_with_lock *self);
+
+int queue_with_lock_size(struct queue_with_lock *self, ll *size);
+
+int queue_with_lock_enqueue(struct queue_with_lock *self, void *p);
+int queue_with_lock_dequeue(struct queue_with_lock *self, void **p);
+
+int queue_with_lock_peek(struct queue_with_lock *self, void **p);
 
 #endif
 
