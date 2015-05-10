@@ -10,6 +10,19 @@
 #include "pack.h"
 
 
+/*
+ * Options are key value pairs organized in
+ * a linked list.
+ */
+struct kvpair
+{
+	char		*key;
+	char		*val;
+
+	struct list	list;
+};
+
+
 static inline int _strcmp2(const char *x, const char *z);
 static int _insert_option(struct optpool *self, const char *keqv);
 static struct kvpair *_find_option_by_key(struct optpool *self,
@@ -267,7 +280,6 @@ static int _insert_option(struct optpool *self, const char *keqv)
 		}
 
 		list_ctor(&opt->list);
-
 		list_insert_before(&self->opts, &opt->list);
 	}
 

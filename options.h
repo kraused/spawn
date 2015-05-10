@@ -9,18 +9,6 @@
 struct buffer;
 
 /*
- * Options are key value pairs organized in
- * a linked list.
- */
-struct kvpair
-{
-	char		*key;
-	char		*val;
-
-	struct list	list;
-};
-
-/*
  * A pool of options.
  */
 struct optpool
