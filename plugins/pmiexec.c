@@ -9,12 +9,14 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
 
 #include "compiler.h"
 #include "error.h"
 #include "plugin.h"
 #include "helper.h"
 #include "task.h"
+#include "spawn.h"
 
 #include "pmi/server.h"
 
@@ -23,7 +25,7 @@ static int _local(struct task_plugin *self,
 static int _other(struct task_plugin *self,
                   int argc, char **argv);
 static int _watch_child(struct task_plugin *self, long long *child, int *status,
-                        int fdo, int fde, int fdpmi);
+                        int fdo, int fde, struct pmi_server *pmisrv);
 static int _read_from_child(int fd, char *line, int *len, ll *size,
                             struct task_plugin *plu,
                             int (*flush)(struct task_plugin *, const char *));
@@ -69,6 +71,7 @@ static int _other(struct task_plugin *self,
 	int status;
 	int fdo[2], fde[2];
 	int fdpmi[2];
+	struct pmi_server pmisrv;
 
 	err = pipe(fdo);
 	if (unlikely(err < 0)) {
@@ -84,9 +87,11 @@ static int _other(struct task_plugin *self,
 		return -errno;
 	}
 
-	/* Pipe for PMI communication.
+	/* Socket for PMI communication. We cannot use a pipe here
+         * since server and client read from and write to the same
+         * file descriptor.
 	 */
-	err = pipe(fdpmi);
+	err = socketpair(AF_UNIX, SOCK_STREAM, 0, fdpmi);
 	if (unlikely(err < 0)) {
 		error("pipe() failed. errno = %d says '%s'.",
 		      errno, strerror(errno));
@@ -126,11 +131,36 @@ static int _other(struct task_plugin *self,
 
 	log("Child process %d is alive.", (int )child);
 
-	err = _watch_child(self, &child, &status, fdo[0], fde[0], fdpmi[0]);
+	/* FIXME Error handling.
+	 */
+	close(fdo[1]);
+	close(fde[1]);
+	close(fdpmi[1]);
+
+	err = pmi_server_ctor(&pmisrv, self->spawn->alloc, fdpmi[0],
+	                      /* Subtract one since the root process is part of the
+	                       * tree but not of the PMI job.
+	                       */
+	                      self->spawn->tree.here - 1,
+	                      self->spawn->tree.size - 1);
+	if (unlikely(err)) {
+		fcallerror("pmi_server_ctor", err);
+		return err;
+	}
+
+	err = _watch_child(self, &child, &status, fdo[0], fde[0], &pmisrv);
 	if (unlikely(err)) {
 		fcallerror("_watch_child", err);
 		return err;
 	}
+
+	close(fdo[0]);
+	close(fde[0]);
+	close(fdpmi[0]);
+
+	err = pmi_server_dtor(&pmisrv);
+	if (unlikely(err))
+		fcallerror("pmi_server_dtor", err);
 
 	if (likely(WIFEXITED(status))) {
 		log("Child process terminated with exit code %d.", WEXITSTATUS(status));
@@ -150,7 +180,7 @@ static int _other(struct task_plugin *self,
 #define MAX_LINE_LEN	512
 
 static int _watch_child(struct task_plugin *self, long long *child, int *status,
-                        int fdo, int fde, int fdpmi)
+                        int fdo, int fde, struct pmi_server *pmisrv)
 {
 	int err;
 	struct pollfd pollfds[3];
@@ -170,10 +200,10 @@ static int _watch_child(struct task_plugin *self, long long *child, int *status,
 
 		pollfds[0].fd = fdo;
 		pollfds[1].fd = fde;
-		pollfds[2].fd = fdpmi;
-		pollfds[0].events = POLLIN | POLLPRI | POLLERR;
-		pollfds[1].events = POLLIN | POLLPRI | POLLERR;
-		pollfds[2].events = POLLIN | POLLPRI | POLLERR;
+		pollfds[2].fd = pmisrv->fd;
+		pollfds[0].events = POLLIN;
+		pollfds[1].events = POLLIN;
+		pollfds[2].events = POLLIN;
 
 		/* TODO Optimize the timeout.
 		 */
@@ -202,8 +232,10 @@ static int _watch_child(struct task_plugin *self, long long *child, int *status,
 			if (0 != size)
 				++k;
 		}
-		if (pollfds[2].revents & POLLIN) {
-
+		if ((pollfds[2].revents & POLLIN) && !(pollfds[2].revents & POLLHUP)) {
+			err = pmi_server_talk(pmisrv);
+			if (unlikely(err))
+				fcallerror("pmi_server_talk", err);
 		}
 
 		quit = (0 == *child) && (0 == k);
