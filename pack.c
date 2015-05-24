@@ -181,8 +181,13 @@ int buffer_pack_ ## T(struct buffer *self, const T *value, ll num)	\
 	if (unlikely(!self || !value || (num < 0))) 			\
 		return -EINVAL;						\
 									\
-	if (unlikely(self->pos + num*sizeof(T) > self->memsize)) {	\
-		err = _buffer_realloc(self, 2*self->memsize);		\
+        if (unlikely(self->pos + num*sizeof(T) > self->memsize)) {	\
+		ui64 x = self->memsize;					\
+		while (self->pos + num*sizeof(T) > x) {			\
+			x *= 2;						\
+		}							\
+									\
+		err = _buffer_realloc(self, x);				\
 		if (unlikely(err)) {					\
 			fcallerror("_buffer_realloc()", err);		\
 			return err;					\
