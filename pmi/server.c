@@ -234,7 +234,7 @@ int pmi_server_kvs_unpack(struct pmi_server *self, const ui8 *bytes, ui64 len)
 		list_insert_before(&self->kvs, &kv->list);
 	}
 
-	return 1;
+	return 0;
 }
 
 int pmi_server_kvs_free(struct pmi_server *self)
