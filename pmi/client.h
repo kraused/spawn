@@ -2,6 +2,8 @@
 #ifndef SPAWN_PMI_CLIENT_H_INCLUDED
 #define SPAWN_PMI_CLIENT_H_INCLUDED 1
 
+#define PMI_SUCCESS	0
+
 int PMI2_Init(int threaded, int *spawned, int *size, int *rank, int *appnum, int *version, int *subversion);
 int PMI2_Finalize();
 
