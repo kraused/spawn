@@ -481,7 +481,7 @@ dequeue:
 			goto fail;
 		}
 
-		queue_capacity(&self->queue, &capacity);
+		queue_capacity(&self->queue, &size);
 
 		if (unlikely(0 == capacity)) {
 			error("Queue capacity equals zero.");
