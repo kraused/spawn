@@ -88,19 +88,19 @@ static void _report(FILE *f, struct msgbuf *b, const char* prefix, const char* f
 	char time[64];
 	struct timeval tv;
 	struct tm tm;
+	char hostname[64];
 
 	gettimeofday(&tv, NULL);
 	localtime_r(&tv.tv_sec, &tm);
 
 	strftime(time, sizeof(time), "%FT%H%M%S", &tm);
 
-	/* FIXME Add the hostname to the information.
-	 */
+	gethostname(hostname, sizeof(hostname));
 
 	vsnprintf(_msg1, sizeof(_msg1), fmt, vl);
 	snprintf(_msg2, sizeof(_msg2),
-	         " %s.%06ld [%04d, %04d] (%s(), %s:%ld): %s%s\n",
-	         time, (long )tv.tv_usec, (int )getpid(), (int )gettid(), func,
+	         " %s.%06ld %s [%04d, %04d] (%s(), %s:%ld): %s%s\n",
+	         time, (long )tv.tv_usec, hostname, (int )getpid(), (int )gettid(), func,
 	         file, line, prefix, _msg1);
 
 	if (b) {
