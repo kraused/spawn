@@ -320,6 +320,13 @@ static int _kvs_fence(struct pmi_server *srv, void *ctx)
 
 	/* TODO Use the tree structure to speed this up and reduce the
 	 *      number of messages.
+	 *
+	 *      Unfortunately that is not that easy. The root of the tree is
+	 *      process zero which does not spawn an (PMI) process and does
+	 *      not receive a "kvs-fence" request as the others do. Thus, in
+	 *      order to use the tree the root process would need to continuously
+	 *      spin and call task_plugin_api_recv() which would require a high
+	 *      CPU load.
 	 */
 
 	if (1 == self->task->spawn->tree.here) {

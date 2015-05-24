@@ -41,13 +41,19 @@ int queue_dtor(struct queue *self);
 int queue_change_capacity(struct queue *self, ll capacity);
 
 /*
- * Queue the size of the queue.
+ * Get the capacity of the queue.
  */
-static inline int queue_size(struct queue *self, ll *size)
+static inline void queue_capacity(struct queue *self, ll *capacity)
+{
+	*capacity = self->capacity;
+}
+
+/*
+ * Get the size of the queue.
+ */
+static inline void queue_size(struct queue *self, ll *size)
 {
 	*size = self->size;
-
-	return 0;
 }
 
 /*

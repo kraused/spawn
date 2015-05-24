@@ -481,16 +481,15 @@ dequeue:
 			goto fail;
 		}
 
-		/* Safe to ignore error. */
-		queue_size(&self->queue, &size);
+		queue_capacity(&self->queue, &capacity);
 
-		if (unlikely(0 == size)) {
-			error("Queue size equals zero.");
+		if (unlikely(0 == capacity)) {
+			error("Queue capacity equals zero.");
 			die();
 		}
 
-		/* TODO We could probably do better than doubling the size. */
-		err = queue_change_capacity(&self->queue, 2*size);
+		/* TODO We could probably do better than doubling the capacity. */
+		err = queue_change_capacity(&self->queue, 2*capacity);
 		if (unlikely(err)) {
 			fcallerror("queue_change_capacity", err);
 			goto fail;
