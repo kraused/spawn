@@ -27,7 +27,6 @@ static int _handle_finalize(struct pmi_server *srv, struct pmi_unpacked_cmd *cmd
 static int _handle_kvs_put(struct pmi_server *srv, struct pmi_unpacked_cmd *cmd);
 static int _handle_kvs_get(struct pmi_server *srv, struct pmi_unpacked_cmd *cmd);
 static int _handle_kvs_fence(struct pmi_server *srv, struct pmi_unpacked_cmd *cmd);
-static int _handle_abort(struct pmi_server *srv, struct pmi_unpacked_cmd *cmd);
 
 static __thread char _buf[4096];
 static struct _pmi_supported_cmd {
@@ -39,13 +38,14 @@ static struct _pmi_supported_cmd {
 	{"kvs-put", _handle_kvs_put},
 	{"kvs-get", _handle_kvs_get},
 	{"kvs-fence", _handle_kvs_fence},
-	{"abort", _handle_abort},
 	{NULL, NULL}
 };
 
 
 int pmi_server_ctor(struct pmi_server *self, struct alloc *alloc,
-                    int fd, int rank, int size)
+                    int fd, int rank, int size,
+                    pmi_kvs_fence_impl kvs_fence,
+                    void *kvs_fence_ctx)
 {
 	memset(self, 0, sizeof(*self));
 
@@ -53,6 +53,9 @@ int pmi_server_ctor(struct pmi_server *self, struct alloc *alloc,
 	self->rank  = rank;
 	self->size  = size;
 	self->alloc = alloc;
+
+	self->kvs_fence     = kvs_fence;
+	self->kvs_fence_ctx = kvs_fence_ctx;
 
 	list_ctor(&self->kvs);
 
@@ -62,24 +65,14 @@ int pmi_server_ctor(struct pmi_server *self, struct alloc *alloc,
 int pmi_server_dtor(struct pmi_server *self)
 {
 	int err;
-	struct list *p;
-	struct list *q;
-	struct pmi_kvpair *kv;
 
-	/* If ZFREE() fails we prematurely quit the function
-	 * which will probably result in a memory leak.
-	 */
-
-	LIST_FOREACH_S(p, q, &self->kvs) {
-		kv = LIST_ENTRY(p, struct pmi_kvpair, list);
-
-		err = ZFREE(self->alloc, (void **)&kv, 1,
-		            sizeof(struct pmi_kvpair), "");
-		if (unlikely(err)) {
-			fcallerror("ZFREE", err);
-			return err;
-		}
+	err = pmi_server_kvs_free(self);
+	if (unlikely(err)) {
+		fcallerror("pmi_server_kvs_free", err);
+		return err;
 	}
+
+	list_dtor(&self->kvs);
 
 	return 0;
 }
@@ -91,6 +84,7 @@ int pmi_server_talk(struct pmi_server *self)
 	const char *errmsg;
 	struct pmi_unpacked_cmd cmd;
 	struct _pmi_supported_cmd *z;
+	char resp[32];
 
 	static int first = 1;
 
@@ -107,14 +101,14 @@ int pmi_server_talk(struct pmi_server *self)
 
 		x = pmi_read_bytes(self->fd, _buf, strlen(PMI_INIT_STRING) + 1);
 		if (unlikely(x)) {
-			cmd.cmd = "init";
+			snprintf(resp, sizeof(resp), "init-response");
 			err     = 1;
 			errmsg  = "Failed to read init string";
 			goto fail;
 		}
 
 		if (unlikely(strcmp(_buf, PMI_INIT_STRING))) {
-			cmd.cmd = "init";
+			snprintf(resp, sizeof(resp), "init-response");
 			err     = 2;
 			errmsg  = "Init string does not match. Cannot handle this situation";
 			goto fail;
@@ -123,7 +117,8 @@ int pmi_server_talk(struct pmi_server *self)
 
 	x = pmi_recv(self->fd, _buf, sizeof(_buf));
 	if (unlikely(PMI_SUCCESS != x)) {
-		cmd.cmd = "?";	/* TODO What should we do in this situation? */
+		/* TODO What should we do in this situation? */
+		snprintf(resp, sizeof(resp), "?-response");
 		err     = 3;
 		errmsg  = "Failed to read message from client.";
 		goto fail;
@@ -131,11 +126,14 @@ int pmi_server_talk(struct pmi_server *self)
 
 	x = pmi_cmd_parse(&cmd, _buf);
 	if (unlikely(PMI_SUCCESS != x)) {
-		cmd.cmd = "?";	/* TODO What should we do in this situation? */
+		/* TODO What should we do in this situation? */
+		snprintf(resp, sizeof(resp), "?-response");
 		err     = 4;
 		errmsg  = "Failed to parse command.";
 		goto fail;
 	}
+
+	snprintf(resp, sizeof(resp), "%s-response", cmd.cmd);
 
 	if (unlikely(self->finalized)) {
 		err    = 5;
@@ -165,11 +163,14 @@ int pmi_server_talk(struct pmi_server *self)
 		goto fail;
 	}
 
-	if (unlikely(x)) {
-		err    = x;
-		errmsg = "Failure in processing the command.";
-		goto fail;
-	}
+	/* TODO We do not differentiate between expected (KVS get for a non-existing key)
+	 *      and unexpected failures (write fails, etc.). Expected failures should not
+	 *      be reported.
+	 */
+	if (unlikely(x))
+		return x;	/* Do not send a message. The handler will have done that
+				 * already.
+				 */
 
 	if (0 == strcmp(cmd.cmd, "fullinit"))
 		self->initialized = 1;
@@ -179,8 +180,91 @@ int pmi_server_talk(struct pmi_server *self)
 	return 0;
 
 fail:
-	pmi_sendf(self->fd, "cmd=%s;thrid=0;rc=%d;errmsg=%s;", cmd.cmd, err, errmsg);
+	pmi_sendf(self->fd, "cmd=%s;thrid=0;rc=%d;errmsg=%s;", resp, err, errmsg);
 	return -err;
+}
+
+int pmi_server_kvs_pack(struct pmi_server *self, struct alloc *alloc, ui8 **bytes, ui64 *len)
+{
+	int err;
+	struct list *p;
+	struct pmi_kvpair *kv;
+	si64 i;
+
+	*len = 2*PMI_KVPAIR_MAX_STRLEN*list_length(&self->kvs);
+
+	err = ZALLOC(alloc, (void **)bytes, *len, sizeof(char), "bytes");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		return err;
+	}
+
+	i = 0;
+	LIST_FOREACH(p, &self->kvs) {
+		kv = LIST_ENTRY(p, struct pmi_kvpair, list);
+
+		memcpy(&(*bytes)[PMI_KVPAIR_MAX_STRLEN*(2*i + 0)], kv->key, PMI_KVPAIR_MAX_STRLEN);
+		memcpy(&(*bytes)[PMI_KVPAIR_MAX_STRLEN*(2*i + 1)], kv->val, PMI_KVPAIR_MAX_STRLEN);
+
+		++i;
+	}
+
+	return 0;
+}
+
+int pmi_server_kvs_unpack(struct pmi_server *self, const ui8 *bytes, ui64 len)
+{
+	int err;
+	si64 i, n;
+	struct pmi_kvpair *kv;
+
+	n = len/(2*PMI_KVPAIR_MAX_STRLEN);
+
+	for (i = 0; i < n; ++i) {
+		err = ZALLOC(self->alloc, (void **)&kv,
+		             1, sizeof(struct pmi_kvpair), "kv");
+		if (unlikely(err)) {
+			fcallerror("ZALLOC", err);
+			return 1;
+		}
+
+		memcpy(kv->key, &bytes[PMI_KVPAIR_MAX_STRLEN*(2*i + 0)], PMI_KVPAIR_MAX_STRLEN);
+		memcpy(kv->val, &bytes[PMI_KVPAIR_MAX_STRLEN*(2*i + 1)], PMI_KVPAIR_MAX_STRLEN);
+
+		list_insert_before(&self->kvs, &kv->list);
+	}
+
+	return 1;
+}
+
+int pmi_server_kvs_free(struct pmi_server *self)
+{
+	int err;
+	struct list *p;
+	struct list *q;
+	struct pmi_kvpair *kv;
+
+	/* If ZFREE() fails we prematurely quit the function
+	 * which will probably result in a memory leak.
+	 */
+
+	LIST_FOREACH_S(p, q, &self->kvs) {
+		kv = LIST_ENTRY(p, struct pmi_kvpair, list);
+
+		err = ZFREE(self->alloc, (void **)&kv, 1,
+		            sizeof(struct pmi_kvpair), "");
+		if (unlikely(err)) {
+			fcallerror("ZFREE", err);
+			return err;
+		}
+	}
+
+	list_dtor(&self->kvs);
+	list_ctor(&self->kvs);	/* In case the list will be
+				 * reused later.
+				 */
+
+	return 0;
 }
 
 
@@ -226,7 +310,6 @@ static int _handle_kvs_put(struct pmi_server *srv, struct pmi_unpacked_cmd *cmd)
 	if (unlikely(k >= PMI_KVPAIR_MAX_STRLEN))
 		log("Warning: KVS string truncated.");
 
-	list_ctor(&kv->list);
 	list_insert_before(&srv->kvs, &kv->list);
 
 	return pmi_sendf(srv->fd, "cmd=kvs-put-response;thrid=0;rc=0;");
@@ -254,6 +337,9 @@ static int _handle_kvs_get(struct pmi_server *srv, struct pmi_unpacked_cmd *cmd)
 		}
 	}
 
+	/* It is unclear to me at this point whether
+	 */
+
 	if (unlikely(!val)) {
 		err = pmi_sendf(srv->fd, "cmd=kvs-get-response;thrid=0;flag=false;rc=1;errmsg=Key not found.;");
 		return 1;
@@ -264,11 +350,17 @@ static int _handle_kvs_get(struct pmi_server *srv, struct pmi_unpacked_cmd *cmd)
 
 static int _handle_kvs_fence(struct pmi_server *srv, struct pmi_unpacked_cmd *cmd)
 {
-	return PMI_SUCCESS;
-}
+	int x;
 
-static int _handle_abort(struct pmi_server *srv, struct pmi_unpacked_cmd *cmd)
-{
-	return PMI_SUCCESS;
+	x = 0;
+	if (srv->size > 1)
+		x = srv->kvs_fence(srv, srv->kvs_fence_ctx);
+
+	if (unlikely(PMI_SUCCESS != x)) {
+		pmi_sendf(srv->fd, "cmd=kvs-fence-response;thrid=0;rc=1;errmsg=Fence failed.;");
+		return 1;
+	}
+
+	return pmi_sendf(srv->fd, "cmd=kvs-fence-response;thrid=0;rc=0;");
 }
 

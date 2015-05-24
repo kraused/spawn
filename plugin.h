@@ -2,9 +2,7 @@
 #ifndef SPAWN_PLUGIN_H_INCLUDED
 #define SPAWN_PLUGIN_H_INCLUDED 1
 
-/* FIXME
- */
-struct spawn;
+struct task;
 
 struct plugin;
 struct plugin_ops;
@@ -94,7 +92,7 @@ struct task_plugin
 {
 	struct plugin			base;
 
-	struct spawn			*spawn;
+	struct task			*task;
 
 	struct task_plugin_ops		*ops;
 };

@@ -79,8 +79,6 @@ int PMI2_Finalize()
 	if (unlikely(PMI_SUCCESS != x))
 		return x;
 
-	/* FIXME Handle response */
-
 	x = pmi_cmd_parse(&cmd, _buf);
 	if (unlikely(PMI_SUCCESS != x))
 		return x;
@@ -112,8 +110,6 @@ int PMI2_KVS_Put(const char *key, const char *value)
 	if (unlikely(PMI_SUCCESS != x))
 		return x;
 
-	/* FIXME Handle response */
-
 	x = pmi_cmd_parse(&cmd, _buf);
 	if (unlikely(PMI_SUCCESS != x))
 		return x;
@@ -143,7 +139,7 @@ int PMI2_KVS_Get(const char *job_id, int src_pmi_id, const char *key, char *valu
 		return 1;
 	}
 
-	value[0] = 0;
+	memset(value, 0, maxval);	/* To simplify debugging */
 	*vallen  = 0;
 
 	x = pmi_sendf(_pmi_fd(), "cmd=kvs-get;thrid=0;key=%s;", key);
@@ -191,8 +187,6 @@ int PMI2_KVS_Fence()
 	x = pmi_recv(_pmi_fd(), _buf, sizeof(_buf));
 	if (unlikely(PMI_SUCCESS != x))
 		return x;
-
-	/* FIXME Handle response */
 
 	x = pmi_cmd_parse(&cmd, _buf);
 	if (unlikely(PMI_SUCCESS != x))

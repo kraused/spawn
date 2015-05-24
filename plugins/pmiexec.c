@@ -17,6 +17,7 @@
 #include "helper.h"
 #include "task.h"
 #include "spawn.h"
+#include "alloc.h"
 
 #include "pmi/server.h"
 
@@ -29,6 +30,7 @@ static int _watch_child(struct task_plugin *self, long long *child, int *status,
 static int _read_from_child(int fd, char *line, int *len, ll *size,
                             struct task_plugin *plu,
                             int (*flush)(struct task_plugin *, const char *));
+static int _kvs_fence(struct pmi_server *srv, void *ctx);
 
 static struct task_plugin_ops _pmiexec_ops = {
 	.local = _local,
@@ -137,12 +139,13 @@ static int _other(struct task_plugin *self,
 	close(fde[1]);
 	close(fdpmi[1]);
 
-	err = pmi_server_ctor(&pmisrv, self->spawn->alloc, fdpmi[0],
+	err = pmi_server_ctor(&pmisrv, self->task->spawn->alloc, fdpmi[0],
 	                      /* Subtract one since the root process is part of the
 	                       * tree but not of the PMI job.
 	                       */
-	                      self->spawn->tree.here - 1,
-	                      self->spawn->tree.size - 1);
+	                      self->task->spawn->tree.here - 1,
+	                      self->task->spawn->tree.size - 1,
+	                      _kvs_fence, (void *)self);
 	if (unlikely(err)) {
 		fcallerror("pmi_server_ctor", err);
 		return err;
@@ -302,6 +305,92 @@ static int _read_from_child(int fd, char *line, int *len, ll *size,
 	n = strlen(x);
 	*((char *)mempcpy(line + (*len), x, n)) = 0;
 	*len += n;
+
+	return 0;
+}
+
+static int _kvs_fence(struct pmi_server *srv, void *ctx)
+{
+	struct task_plugin *self = (struct task_plugin *)ctx;
+	int err;
+	struct task_recvd_message *msg;
+	int i, k;
+	ui8 *bytes;
+	ui64 len;
+
+	/* TODO Use the tree structure to speed this up and reduce the
+	 *      number of messages.
+	 */
+
+	if (1 == self->task->spawn->tree.here) {
+		for (i = 2; i < self->task->spawn->tree.size; ++i) {
+			k = 0;
+			do {
+				err = task_plugin_api_recv(self, &msg);
+				++k;
+			} while (err);	/* TODO Can we do better than spinning here?
+			                 */
+
+			err = pmi_server_kvs_unpack(srv, msg->msg.bytes, msg->msg.len);
+			if (unlikely(err))
+				fcallerror("pmi_server_kvs_unpack", err);
+
+			/* FIXME We cannot use free_message_payload() here because
+			 *       we do not have the header. However, we cannot be sure
+			 *       the byte array was allocated with srv->alloc.
+			 */
+			err = ZFREE(srv->alloc, (void **)&msg->msg.bytes, msg->msg.len, sizeof(ui8), "");
+			if (unlikely(err))
+				fcallerror("ZFREE", err);
+		}
+
+		err = pmi_server_kvs_pack(srv, srv->alloc, &bytes, &len);
+		if (unlikely(err))
+			fcallerror("pmi_server_kvs_pack", err);
+
+		for (i = 2; i < self->task->spawn->tree.size; ++i) {
+			err = task_plugin_api_send(self, i, bytes, len);
+			if (unlikely(err))
+				fcallerror("task_plugin_api_send", err);
+		}
+
+		err = ZFREE(srv->alloc, (void **)&bytes, len, sizeof(ui8), "");
+		if (unlikely(err))
+			fcallerror("ZFREE", err);
+	} else {
+		pmi_server_kvs_pack(srv, srv->alloc, &bytes, &len);
+
+		err = pmi_server_kvs_free(srv);
+		if (unlikely(err))
+			fcallerror("pmi_server_kvs_free", err);
+
+		err = task_plugin_api_send(self, 1, bytes, len);
+		if (unlikely(err))
+			fcallerror("task_plugin_api_send", err);
+
+		err = ZFREE(srv->alloc, (void **)&bytes, len, sizeof(ui8), "");
+		if (unlikely(err))
+			fcallerror("ZFREE", err);
+
+		k = 0;
+		do {
+			err = task_plugin_api_recv(self, &msg);
+			++k;
+		} while (err);	/* TODO Can we do better than spinning here?
+		                 */
+
+		pmi_server_kvs_unpack(srv, msg->msg.bytes, msg->msg.len);
+		if (unlikely(err))
+			fcallerror("pmi_server_kvs_unpack", err);
+
+		/* FIXME We cannot use free_message_payload() here because
+		 *       we do not have the header. However, we cannot be sure
+		 *       the byte array was allocated with srv->alloc.
+		 */
+		err = ZFREE(srv->alloc, (void **)&msg->msg.bytes, msg->msg.len, sizeof(ui8), "");
+		if (unlikely(err))
+			fcallerror("ZFREE", err);
+	}
 
 	return 0;
 }
