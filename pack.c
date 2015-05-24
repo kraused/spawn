@@ -483,13 +483,13 @@ dequeue:
 
 		queue_capacity(&self->queue, &size);
 
-		if (unlikely(0 == capacity)) {
+		if (unlikely(0 == size)) {
 			error("Queue capacity equals zero.");
 			die();
 		}
 
 		/* TODO We could probably do better than doubling the capacity. */
-		err = queue_change_capacity(&self->queue, 2*capacity);
+		err = queue_change_capacity(&self->queue, 2*size);
 		if (unlikely(err)) {
 			fcallerror("queue_change_capacity", err);
 			goto fail;
