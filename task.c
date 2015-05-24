@@ -27,6 +27,12 @@ int task_ctor(struct task *self, struct alloc *alloc,
 	self->spawn   = spawn;
 	self->channel = channel;
 
+	/* TODO Make the size configurable
+	 */
+	err = queue_with_lock_ctor(&self->recvq, alloc, 4096);
+	if (unlikely(err))
+		return err;
+
 	plu = load_plugin(path);
 	if (unlikely(!plu))
 		return -ESOMEFAULT;
@@ -39,7 +45,7 @@ int task_ctor(struct task *self, struct alloc *alloc,
 
 	/* Required for the task_plugin_api_X functions.
 	 */
-	self->plu->spawn = spawn;
+	self->plu->task = self;
 
 	err = thread_ctor(&self->thread);
 	if (unlikely(err)) {
@@ -54,6 +60,11 @@ int task_ctor(struct task *self, struct alloc *alloc,
 		fcallerror("array_of_str_dup", err);
 		return err;
 	}
+
+	/* FIXME This function leaks resources when one of the initialization
+	 *       routines. It would be better to have a single exit point and
+	 *       handle failures in there.
+	 */
 
 	return 0;
 }
@@ -71,6 +82,12 @@ int task_dtor(struct task *self)
 	err = array_of_str_free(self->alloc, self->argc + 1, &self->argv);
 	if (unlikely(err)) {
 		fcallerror("array_of_str_free", err);
+		return err;
+	}
+
+	err = queue_with_lock_dtor(&self->recvq);
+	if (unlikely(err)) {
+		fcallerror("queue_with_lock_dtor", err);
 		return err;
 	}
 
@@ -103,14 +120,51 @@ int task_cancel(struct task *self)
 	return 0;
 }
 
+int task_enqueue_message(struct task *self, struct task_recvd_message *msg)
+{
+	return queue_with_lock_enqueue(&self->recvq, (void *)msg);
+}
+
 int task_plugin_api_write_line_stdout(struct task_plugin *plu, const char *line)
 {
-	return _send_write_message(plu->spawn, MESSAGE_TYPE_WRITE_STDOUT, line);
+	return _send_write_message(plu->task->spawn, MESSAGE_TYPE_WRITE_STDOUT, line);
 }
 
 int task_plugin_api_write_line_stderr(struct task_plugin *plu, const char *line)
 {
-	return _send_write_message(plu->spawn, MESSAGE_TYPE_WRITE_STDERR, line);
+	return _send_write_message(plu->task->spawn, MESSAGE_TYPE_WRITE_STDERR, line);
+}
+
+int task_plugin_api_send(struct task_plugin *plu, int dst, ui8 *bytes, ui64 len)
+{
+	int err;
+	struct message_header header;
+	struct message_user   msg;
+
+	memset(&header, 0, sizeof(header));
+	memset(&msg   , 0, sizeof(msg));
+
+	header.src     = plu->task->spawn->tree.here;	/* Always the same */
+	header.dst     = dst;
+	header.flags   = MESSAGE_FLAG_UCAST;
+	header.type    = MESSAGE_TYPE_USER;
+	header.channel = plu->task->channel;
+
+	msg.len   = len;
+	msg.bytes = bytes;
+
+	err = spawn_send_message(plu->task->spawn, &header, (void *)&msg);
+	if (unlikely(err)) {
+		fcallerror("spawn_send_message", err);
+		return err;
+	}
+
+	return 0;
+}
+
+int task_plugin_api_recv(struct task_plugin *plu, struct task_recvd_message **msg)
+{
+	return queue_with_lock_dequeue(&plu->task->recvq, (void **)msg);
 }
 
 

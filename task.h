@@ -4,6 +4,9 @@
 
 #include "list.h"
 #include "thread.h"
+#include "queue.h"
+#include "protocol.h"	/* For message_user */
+
 
 /*
  * A user task. The logic of a task is implemented in a dynamically
@@ -24,6 +27,19 @@ struct task
 	/* Communication channel allocated for this task.
 	 */
 	int			channel;
+
+	/* Queue for received messages.
+	 */
+	struct queue_with_lock	recvq;
+};
+
+/*
+ * Record of a received message
+ */
+struct task_recvd_message
+{
+	int			src;
+	struct message_user	msg;
 };
 
 /*
@@ -69,10 +85,26 @@ static inline int task_exit_code(struct task *self)
 }
 
 /*
+ * Enqueue a message for the task.
+ */
+int task_enqueue_message(struct task *self, struct task_recvd_message *msg);
+
+/*
  * Write a line to stdout or stderr from a task plugin.
  */
 int task_plugin_api_write_line_stdout(struct task_plugin *plu, const char *line);
 int task_plugin_api_write_line_stderr(struct task_plugin *plu, const char *line);
+
+/*
+ * Send a message to another task. The task identifier equals the process identifier
+ * in the tree.
+ */
+int task_plugin_api_send(struct task_plugin *plu, int dst, ui8 *bytes, ui64 len);
+
+/*
+ * Receive a message.
+ */
+int task_plugin_api_recv(struct task_plugin *plu, struct task_recvd_message **msg);
 
 #endif
 

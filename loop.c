@@ -25,6 +25,7 @@
 #include "watchdog.h"
 #include "plugin.h"
 #include "msgbuf.h"
+#include "task.h"
 
 
 static int _work_available(struct spawn *spawn);
@@ -59,6 +60,7 @@ static int _handle_request_exit(struct spawn *spawn, struct message_header *head
 static int _handle_response_exit(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_write_stdout(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static int _handle_write_stderr(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
+static int _handle_user(struct spawn *spawn, struct message_header *header, struct buffer *buffer);
 static struct job_exit *_find_job_exit(struct spawn *spawn);
 static int _find_peerport(struct spawn *spawn, ui32 ip, ui32 portnum);
 static int _fix_lft(struct spawn *spawn, int port, int *ids, int nids);
@@ -168,18 +170,14 @@ int loop(struct spawn *spawn)
 
 		if (-1 != newfd) {
 			err = _handle_accept(spawn, newfd);
-			if (unlikely(err)) {
+			if (unlikely(err))
 				fcallerror("_handle_accept", err);
-				die();	/* FIXME */
-			}
 		}
 
 		if (buffer) {
 			err = _handle_message(spawn, buffer);
-			if (unlikely(err)) {
+			if (unlikely(err))
 				fcallerror("_handle_message", err);
-				die();	/* FIXME */
-			}
 		}
 	}
 
@@ -362,6 +360,9 @@ static int _handle_message(struct spawn *spawn, struct buffer *buffer)
 		break;
 	case MESSAGE_TYPE_WRITE_STDERR:
 		err = _handle_write_stderr(spawn, &header, buffer);
+		break;
+	case MESSAGE_TYPE_USER:
+		err = _handle_user(spawn, &header, buffer);
 		break;
 	default:
 		error("Dropping unexpected message of type %d from %d.", header.type, header.src);
@@ -1012,6 +1013,55 @@ static int _handle_write_stderr(struct spawn *spawn, struct message_header *head
 	}
 
 	return 0;
+}
+
+static int _handle_user(struct spawn *spawn, struct message_header *header, struct buffer *buffer)
+{
+	int err, tmp;
+	struct task_recvd_message *msg;
+	struct job_task *job;
+
+	err = ZALLOC(spawn->alloc, (void **)&msg, 1, sizeof(struct task_recvd_message), "msg");
+	if (unlikely(err)) {
+		fcallerror("ZALLOC", err);
+		die();	/* FIXME ?*/
+	}
+
+	err = unpack_message_payload(buffer, header, spawn->alloc, (void *)&msg->msg);
+	if (unlikely(err)) {
+		fcallerror("unpack_message_payload", err);
+		die();	/* FIXME ?*/
+	}
+
+	job = _find_job_task(spawn);
+	if (unlikely(!job))
+		goto fail;
+
+	if (unlikely(header->channel != job->channel)) {
+		error("Mismatch between task channel %d and message channel %d.", job->channel, header->channel);
+		goto fail;
+	}
+
+	/* TODO Retry?
+	 */
+	err = task_enqueue_message(job->task, msg);
+	if (unlikely(err)) {
+		fcallerror("task_enqueue_message", err);
+		goto fail;
+	}
+
+	return 0;
+
+fail:
+	tmp = free_message_payload(header, spawn->alloc, (void *)msg);
+	if (unlikely(tmp))
+		fcallerror("free_message_payload", tmp);
+
+	tmp = ZFREE(spawn->alloc, (void **)&msg, 1, sizeof(struct task_recvd_message), "");
+	if (unlikely(tmp))
+		fcallerror("ZFREE", tmp);
+
+	return err;
 }
 
 static struct job_exit *_find_job_exit(struct spawn *spawn)
