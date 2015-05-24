@@ -69,7 +69,7 @@ void spawn_debug(const char* file, const char* func, long line, const char* fmt,
 	va_list vl;
 
 	va_start(vl, fmt);
-	_report(stderr, _bout, "debug: ", file, func, line, fmt, vl);
+	_report(stderr, _berr, "debug: ", file, func, line, fmt, vl);
 	va_end(vl);
 
 	fflush(NULL);
