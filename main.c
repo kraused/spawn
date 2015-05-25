@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <sys/un.h>
@@ -67,6 +68,7 @@ static struct optpool *_alloc_and_fill_optpool(struct alloc *alloc,
                                                const char *file, char **argv);
 static int _check_important_options(struct optpool *opts);
 static int _ignore_sigpipe();
+static void _try_setrlimit_core_unlimited();
 
 
 int main(int argc, char **argv)
@@ -74,9 +76,11 @@ int main(int argc, char **argv)
 	int n, m;
 	int err;
 
+	_try_setrlimit_core_unlimited();
+
 	/* Handle broken pipes in the caller of write()/read().
 	 */
-	_ignore_sigpipe();
+	(void )_ignore_sigpipe();
 	{
 		struct sigaction act, oact;
 
@@ -213,10 +217,6 @@ static int _main_on_other(int argc, char **argv)
 	err = _redirect_stdio();
 	if (unlikely(err))
 		die();
-
-	/* FIXME What are error(), debug(), ... doing when stdout and stderr
-	 *       are closed?
-	 */
 
 	err = daemonize();
 	if (unlikely(err)) {
@@ -647,5 +647,12 @@ static int _ignore_sigpipe()
 	sigaction(SIGPIPE, &act, &oact);
 
 	return 0;
+}
+
+static void _try_setrlimit_core_unlimited()
+{
+	struct rlimit l = {.rlim_cur = RLIM_INFINITY,
+	                   .rlim_max = RLIM_INFINITY};
+	setrlimit(RLIMIT_CORE, &l);
 }
 
