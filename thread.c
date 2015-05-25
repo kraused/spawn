@@ -371,7 +371,7 @@ static void *_thread_main(void *arg)
 	int err;
 	struct thread *self = (struct thread *)arg;
 
-	log("Thread %d is alive.", (int )gettid());
+	debug("Thread %d is alive.", (int )gettid());
 	atomic_write(self->state, THREAD_STATE_INITED);
 
 	if (unlikely(!self)) {
@@ -406,7 +406,7 @@ static void *_thread_main(void *arg)
 	atomic_write(self->err, err);	/* Before updating the state! */
 	atomic_write(self->state, THREAD_STATE_DONE);
 
-	log("Thread %d is done.", (int )gettid());
+	debug("Thread %d is done.", (int )gettid());
 
 	pthread_exit((void *)self);
 }
