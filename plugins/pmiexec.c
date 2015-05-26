@@ -306,6 +306,16 @@ static int _read_from_child(int fd, char *line, int *len, ll *size,
 	*((char *)mempcpy(line + (*len), x, n)) = 0;
 	*len += n;
 
+	if (MAX_LINE_LEN == ((*len) + 1)) {
+		err = flush(plu, line);
+		if (unlikely(err)) {
+			fcallerror("flush", err);
+			return err;
+		}
+
+		*len = 0;
+	}
+
 	return 0;
 }
 
