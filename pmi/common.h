@@ -12,7 +12,7 @@
 #define PMI_VERSION	2
 #define PMI_SUBVERSION	0
 
-#define PMI_INIT_STRING "cmd = init pmi_version=2 pmi_subversion=0\n"
+#define PMI_INIT_STRING "cmd=init pmi_version=2 pmi_subversion=0\n"
 
 #undef  PMI_SUCESS
 #define PMI_SUCCESS	0
